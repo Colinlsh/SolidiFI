@@ -36,3 +36,4 @@ mythslithVenv
 test/predict/
 test/files/
 test/output/
+test/logs/

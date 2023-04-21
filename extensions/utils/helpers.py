@@ -1,3 +1,4 @@
+from datetime import datetime
 import re
 import subprocess
 from typing import Tuple
@@ -42,3 +43,6 @@ def run_subprocess(command: str) -> Tuple[str, str, str]:
     exit_code = process.returncode
     
     return stdout, stderr, exit_code
+
+def get_current_time():
+    return f"{datetime.now().date().isoformat()}_{datetime.now().time().hour}_{datetime.now().time().minute}_{datetime.now().time().second}"

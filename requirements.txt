@@ -5,4 +5,5 @@ configparser
 pandas
 pytest
 solc-select
+solidity-parser
 -e .
