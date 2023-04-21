@@ -8,6 +8,8 @@ import inspection
 import os,sys
 import shutil, glob
 
+from .solidifi import printUsage
+
 
 #tools = ["Oyente", "Securify", "Mythril", "Smartcheck", "Manticore","Slither"]
 tools = []

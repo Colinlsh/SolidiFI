@@ -1,3 +1,0 @@
-[console_scripts]
-solidifi = solidifi.__main__:main
-

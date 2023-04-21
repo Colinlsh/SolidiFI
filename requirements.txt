@@ -3,4 +3,6 @@ ijson
 numpy
 configparser
 pandas
+pytest
+solc-select
 -e .

@@ -4,7 +4,7 @@ from setuptools import find_packages
 
 setup(
     name='solidifi',
-    version='0.0.1',
+    version='0.0.2',
     packages=find_packages(),
     install_requires=[
         'matplotlib',
@@ -17,5 +17,6 @@ setup(
             'console_scripts': [
                 'solidifi = solidifi.__main__:main'
             ]
-    }
+    },
+    py_modules=['solidifi']
 )

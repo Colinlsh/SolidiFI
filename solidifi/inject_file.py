@@ -17,8 +17,10 @@ def update(filename, offset, text):
 
 def preprocess_json_file(filename):
     import re
-    fh = open(filename, 'r+b' )
+    fh = open(filename, 'r+b')
     data = fh.read()
+    start = 0
+    end = 0
     
     for item in re.finditer(b'{' , data ) :
         start = item.start()
@@ -34,22 +36,22 @@ def preprocess_json_file(filename):
 def get_pattern_offset(filename, pattern):
     import re
     locs = []
-    p1=pattern.replace('(', '\(')
-    p2=p1.replace(')', '\)')
-    p3=p2.replace('.', '\.')
-    p4=p3.replace('[', '\[')
-    p5=p4.replace(']', '\]')
-    p6=p5.replace('+', '\+')
-    p7=p6.replace('*', '\*')
-    p8=p7.replace('|', '\|')
-    pat = re.compile( p8.encode(), re.MULTILINE )
-    fh = open(filename, 'rb' )
+    p1 = pattern.replace('(', r'\(')
+    p2 = p1.replace(')', r'\)')
+    p3 = p2.replace('.', r'\.')
+    p4 = p3.replace('[', r'\[')
+    p5 = p4.replace(']', r'\]')
+    p6 = p5.replace('+', r'\+')
+    p7 = p6.replace('*', r'\*')
+    p8 = p7.replace('|', r'\|')
+    pat = re.compile(p8.encode(), re.MULTILINE)
+    fh = open(filename, 'rb')
     data = fh.read()
-    for item in re.finditer(pat, data) :
+    for item in re.finditer(pat, data):
         locs.append(item.start())
         locs.append(item.end())
 
-    if len(locs)==2:
+    if len(locs) == 2:
         current_line = 0
         fh.seek(0)
         while fh.tell() < locs[1]:
