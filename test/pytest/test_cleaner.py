@@ -29,7 +29,7 @@ def test_check_concurrently(directory):
         "test/files/contracts-dataset/Clean/2594.sol",
         "test/files/contracts-dataset/Clean/4164.sol",
         "test/files/contracts-dataset/Clean/2536.sol",
-        "test/files/contracts-dataset/Clean/2889.sol",
+        "test/files/contracts-dataset/Clean/2320.sol",
         "test/files/contracts-dataset/Clean/3665.sol",
     ],
 )
@@ -66,3 +66,12 @@ def test_clean_list_no_pragma(files):
     cleaner = Cleaner()
 
     cleaner.clean(files, 0, clean_type=CleanType.no_pragma)
+
+
+@pytest.mark.parametrize(
+    "files", ["test/files/contracts-dataset/Clean/2156.sol"]
+)
+def test_clean_all(files):
+    cleaner = Cleaner()
+
+    cleaner.clean(files, 0, clean_type=CleanType.all)

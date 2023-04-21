@@ -19,6 +19,7 @@ class CleanType(Enum):
     constructor_enum = 1
     solc_error = 2
     no_pragma = 3
+    all = 4
 
 
 class Cleaner:
@@ -144,6 +145,14 @@ class Cleaner:
         try:
             if solidity_version != "0":
                 _version = solidity_version
+
+                stdout, _, exitcode = run_subprocess(f"solc --version")
+
+                if _version not in stdout:
+                    run_subprocess(
+                        f"solc-select install {_version} && solc-select use {_version}"
+                    )
+
             else:
                 _version = check_solidity_file_version(path)
 
@@ -156,6 +165,15 @@ class Cleaner:
             if clean_type == CleanType.constructor_enum:
                 self._check_constructor_emit(path, _version, file_contents)
             elif clean_type == CleanType.solc_error:
+                stdout, stderr, exit_code = run_subprocess(f"solc {path}")
+                if exit_code != 0:
+                    logger.error(
+                        f"Solc encountered error compling file: {path}\n"
+                    )
+                    logger.error(f"{str(stderr)}\n")
+                    logger.error(f"{str(stdout)}\n")
+            elif clean_type == CleanType.all:
+                self._check_constructor_emit(path, _version, file_contents)
                 stdout, stderr, exit_code = run_subprocess(f"solc {path}")
                 if exit_code != 0:
                     logger.error(
