@@ -23,6 +23,15 @@ def test_check_concurrently(directory):
 
 
 @pytest.mark.parametrize(
+    "directory", ["test/files/contracts-dataset/error_files"]
+)
+def test_clean_for_loop(directory):
+    cleaner = Cleaner()
+
+    cleaner.clean_for_loop(directory, clean_type=CleanType.all)
+
+
+@pytest.mark.parametrize(
     "files",
     [
         "test/files/contracts-dataset/Clean/1371.sol",

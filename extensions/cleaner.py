@@ -162,7 +162,6 @@ class Cleaner:
 
         # Check for errors
         if "errors" in compilation_result:
-            logger.error(f"Error found in {file_path}")
             errors = compilation_result["errors"]
             for error in errors:
                 if error["severity"] == "error":
@@ -309,3 +308,23 @@ class Cleaner:
                         pass
         except Exception as e:
             logger.exception(f"{str(e)}\n")
+
+    def clean_for_loop(
+        self, directory: str, clean_type: CleanType = CleanType.all
+    ):
+        try:
+            path_list = list(Path(directory).glob("**/*.sol"))
+            total_files = len(path_list)
+            processed_files = 0
+            for file in path_list:
+                self.clean(file, total_files, clean_type=clean_type)
+                self.progress_updater.print_progress_bar(
+                    processed_files,
+                    total_files,
+                    prefix="Progress:",
+                    suffix="Complete",
+                )
+                processed_files += 1
+
+        except Exception as e:
+            logger.error(e)

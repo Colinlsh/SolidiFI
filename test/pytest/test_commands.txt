@@ -6,5 +6,7 @@ pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/Sol
 
 pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_cleaner.py -k 'test_check_concurrently' -s
 
+pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_cleaner.py -k 'test_clean_for_loop' -s
+
 pytest -k "test_check_concurrently and Clean" /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_cleaner.py
 
