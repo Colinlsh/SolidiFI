@@ -113,7 +113,7 @@ class Cleaner:
 
                 # Match the constructor within the contract block
                 constructor_pattern = (
-                    rf"constructor\s*\(([\w\s,]+)\)([\s\S]*?)?\s*public\s*{{"
+                    rf"constructor\s*\(([\w\s,]*)\)([\s\S]*?)?\s*public\s*{{"
                 )
 
                 constructor_match = re.search(
