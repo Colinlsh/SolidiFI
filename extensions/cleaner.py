@@ -1,7 +1,9 @@
 from enum import Enum
 from functools import partial
+import json
 from multiprocessing import Manager, Pool, cpu_count
 from multiprocessing.managers import ValueProxy
+import os
 from pathlib import Path
 import re
 from typing import List
@@ -133,6 +135,39 @@ class Cleaner:
 
         return file_contents
 
+    def check_solc_error_json(self, file_contents: str, file_path: str):
+        head, tail = os.path.split(file_path)
+
+        standard_json_input = {
+            "language": "Solidity",
+            "sources": {f"{tail}.sol": {"content": file_contents}},
+            "settings": {
+                "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
+            },
+        }
+
+        standard_json_input_str = json.dumps(standard_json_input)
+
+        stdout, stderr, exit_code = run_subprocess(
+            "solc --standard-json", input_data=standard_json_input_str
+        )
+
+        # Parse the JSON output from solc
+        compilation_result = json.loads(stdout)
+
+        # Check for errors
+        if "errors" in compilation_result:
+            logger.error(f"Error found in {file_path}")
+            errors = compilation_result["errors"]
+            for error in errors:
+                if error["severity"] == "error":
+                    source_location = error.get("sourceLocation", {})
+                    start = source_location.get("start", 0)
+                    line_number = file_contents[:start].count("\n") + 1
+                    logger.error(
+                        f"Error at line {line_number}: {error['message']}"
+                    )
+
     def clean(
         self,
         path: str,
@@ -165,22 +200,10 @@ class Cleaner:
             if clean_type == CleanType.constructor_enum:
                 self._check_constructor_emit(path, _version, file_contents)
             elif clean_type == CleanType.solc_error:
-                stdout, stderr, exit_code = run_subprocess(f"solc {path}")
-                if exit_code != 0:
-                    logger.error(
-                        f"Solc encountered error compling file: {path}\n"
-                    )
-                    logger.error(f"{str(stderr)}\n")
-                    logger.error(f"{str(stdout)}\n")
+                self.check_solc_error_json(file_contents, path)
             elif clean_type == CleanType.all:
                 self._check_constructor_emit(path, _version, file_contents)
-                stdout, stderr, exit_code = run_subprocess(f"solc {path}")
-                if exit_code != 0:
-                    logger.error(
-                        f"Solc encountered error compling file: {path}\n"
-                    )
-                    logger.error(f"{str(stderr)}\n")
-                    logger.error(f"{str(stdout)}\n")
+                self.check_solc_error_json(file_contents, path)
 
             if shared_processed_files and lock:
                 with lock:
