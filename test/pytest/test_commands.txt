@@ -1,10 +1,10 @@
-pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_injection.py -k 'test_inject' -s
+pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_injection.py -k 'test_inject' -s
 
-pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_injection.py -k 'test_multiple_injection' -s
+pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_injection.py -k 'test_multiple_injection' -s
 
-pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_solidifi.py -k 'test_inject' -s
+pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_solidifi.py -k 'test_inject' -s
 
-pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_cleaner.py -k 'test_check_concurrently' -s
+pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/pytest/test_cleaner.py -k 'test_check_concurrently' -s
 
 pytest -k "test_check_concurrently and Clean" /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_cleaner.py
 

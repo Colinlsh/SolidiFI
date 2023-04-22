@@ -135,7 +135,9 @@ class Cleaner:
 
         return file_contents
 
-    def check_solc_error_json(self, file_contents: str, file_path: str):
+    def check_solc_error_json(
+        self, file_contents: str, file_path: str, version: str
+    ):
         head, tail = os.path.split(file_path)
 
         standard_json_input = {
@@ -149,7 +151,8 @@ class Cleaner:
         standard_json_input_str = json.dumps(standard_json_input)
 
         stdout, stderr, exit_code = run_subprocess(
-            "solc --standard-json", input_data=standard_json_input_str
+            f"solc-select use {version} && solc --standard-json",
+            input_data=standard_json_input_str,
         )
 
         # Parse the JSON output from solc
@@ -200,10 +203,10 @@ class Cleaner:
             if clean_type == CleanType.constructor_enum:
                 self._check_constructor_emit(path, _version, file_contents)
             elif clean_type == CleanType.solc_error:
-                self.check_solc_error_json(file_contents, path)
+                self.check_solc_error_json(file_contents, path, _version)
             elif clean_type == CleanType.all:
                 self._check_constructor_emit(path, _version, file_contents)
-                self.check_solc_error_json(file_contents, path)
+                self.check_solc_error_json(file_contents, path, _version)
 
             if shared_processed_files and lock:
                 with lock:
