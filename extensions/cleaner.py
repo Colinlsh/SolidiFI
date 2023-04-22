@@ -150,8 +150,10 @@ class Cleaner:
 
         standard_json_input_str = json.dumps(standard_json_input)
 
+        run_subprocess(f"solc-select use {version}")
+
         stdout, stderr, exit_code = run_subprocess(
-            f"solc-select use {version} && solc --standard-json",
+            f"solc --standard-json",
             input_data=standard_json_input_str,
         )
 
