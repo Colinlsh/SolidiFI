@@ -165,7 +165,7 @@ class Cleaner:
                     start = source_location.get("start", 0)
                     line_number = file_contents[:start].count("\n") + 1
                     logger.error(
-                        f"Error at line {line_number}: {error['message']}"
+                        f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
                     )
 
     def clean(
