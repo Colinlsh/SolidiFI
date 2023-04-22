@@ -219,13 +219,16 @@ class Cleaner:
             logger.exception(f"{str(e)}\n")
 
     def _check_constructor_emit(self, path, _version, file_contents):
-        # Get the contract names
-        contract_names = self.get_contract_names(file_contents)
-
-        # Replace constructors for each contract
-        file_contents = self.replace_constructors(file_contents, contract_names)
-
         version_number = int(_version.split(".")[2])
+
+        if version_number < 22:
+            # Get the contract names
+            contract_names = self.get_contract_names(file_contents)
+
+            # Replace constructors for each contract
+            file_contents = self.replace_constructors(
+                file_contents, contract_names
+            )
 
         if version_number < 21:
             file_contents = file_contents.replace("emit ", "")
