@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import pytest
 
@@ -9,7 +10,7 @@ from extensions.utils.helpers import run_subprocess
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_logging():
-    LoggerSetup(file_name="test_cleaner")
+    LoggerSetup(file_name="test_cleaner", log_level=logging.INFO)
 
 
 # @pytest.mark.parametrize(
@@ -81,7 +82,7 @@ def test_clean_list_no_pragma(files):
 
 
 @pytest.mark.parametrize(
-    "files", ["test/files/contracts-dataset/Clean/3179.sol"]
+    "files", ["test/files/contracts-dataset/Clean/2193.sol"]
 )
 def test_clean_all(files):
     cleaner = Cleaner()

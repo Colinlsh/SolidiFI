@@ -9,7 +9,14 @@ import re
 from typing import List
 from .logger import LoggerSetup
 
-from .utils.helpers import check_solidity_file_version, run_subprocess
+from .utils.helpers import (
+    change_solc_version,
+    check_solidity_file_version,
+    chunks,
+    compile_with_docker,
+    run_subprocess,
+    set_path_context,
+)
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
 
@@ -136,7 +143,12 @@ class Cleaner:
         return file_contents
 
     def check_solc_error_json(
-        self, file_contents: str, file_path: str, version: str
+        self,
+        file_contents: str,
+        file_path: str,
+        version: str = None,
+        solc_bin_path: str = None,
+        with_docker: bool = None,
     ):
         head, tail = os.path.split(file_path)
 
@@ -150,27 +162,108 @@ class Cleaner:
 
         standard_json_input_str = json.dumps(standard_json_input)
 
-        run_subprocess(f"solc-select use {version}")
+        if with_docker:
+            stdout, stderr, exit_code = compile_with_docker(
+                version, standard_json_input_str, logger
+            )
+        else:
+            command = f"solc --standard-json"
 
-        stdout, stderr, exit_code = run_subprocess(
-            f"solc --standard-json",
-            input_data=standard_json_input_str,
-        )
+            if solc_bin_path is not None:
+                command = command.replace("solc", solc_bin_path)
+
+            # change_solc_version(version)
+            stdout, stderr, exit_code = run_subprocess(
+                f"{command}",
+                input_data=standard_json_input_str,
+            )
 
         # Parse the JSON output from solc
-        compilation_result = json.loads(stdout)
+        if stdout:
+            try:
+                compilation_result = json.loads(stdout)
+            except json.JSONDecodeError:
+                logger.error(
+                    f"Error parsing solc output for {file_path}: {stdout}"
+                )
+                return
+
+            # Check for errors
+            if "errors" in compilation_result:
+                errors = compilation_result["errors"]
+                for error in errors:
+                    if error["severity"] == "error":
+                        source_location = error.get("sourceLocation", {})
+                        start = source_location.get("start", 0)
+                        line_number = file_contents[:start].count("\n") + 1
+                        logger.error(
+                            f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
+                        )
+
+        elif stderr:
+            logger.error(stderr)
+
+    def check_solc_error_legacy(
+        self,
+        file_contents: str,
+        file_path: str,
+        version: str = None,
+        solc_bin_path: str = None,
+        with_docker: bool = None,
+    ):
+        head, tail = os.path.split(file_path)
+        temp_file_path = os.path.join(head, f"{tail}.sol")
+
+        # Create a temporary file with the contract content
+        with open(temp_file_path, "w") as temp_file:
+            temp_file.write(file_contents)
+
+        if with_docker:
+            stdout, stderr, exit_code = compile_with_docker(
+                version, temp_file_path, logger
+            )
+        else:
+            command = f"solc --combined-json abi,bin {temp_file_path}"
+
+            if solc_bin_path is not None:
+                command = command.replace("solc", solc_bin_path)
+
+            # change_solc_version(version)
+            stdout, stderr, exit_code = run_subprocess(
+                f"{command}",
+            )
+
+            # Remove the temporary file
+            os.remove(temp_file_path)
 
         # Check for errors
-        if "errors" in compilation_result:
-            errors = compilation_result["errors"]
-            for error in errors:
-                if error["severity"] == "error":
-                    source_location = error.get("sourceLocation", {})
-                    start = source_location.get("start", 0)
-                    line_number = file_contents[:start].count("\n") + 1
-                    logger.error(
-                        f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
-                    )
+        if exit_code != 0:
+            error_lines = stderr.split("\n")
+            for error_line in error_lines:
+                if "Error:" in error_line:
+                    logger.error(f"Error found in {file_path}\n \t{error_line}")
+
+        # Parse the JSON output from solc
+        else:
+            try:
+                compilation_result = json.loads(stdout)
+            except json.JSONDecodeError:
+                logger.error(
+                    f"Error parsing solc output for {file_path}: {stdout}"
+                )
+                return
+
+            # Check for errors
+            if "errors" in compilation_result:
+                errors = compilation_result["errors"]
+                for error in errors:
+                    if error["severity"] == "error":
+                        source_location = error.get("sourceLocation", {})
+                        start = source_location.get("start", 0)
+                        line_number = file_contents[:start].count("\n") + 1
+                        logger.error(
+                            f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
+                        )
 
     def clean(
         self,
@@ -185,12 +278,7 @@ class Cleaner:
             if solidity_version != "0":
                 _version = solidity_version
 
-                stdout, _, exitcode = run_subprocess(f"solc --version")
-
-                if _version not in stdout:
-                    run_subprocess(
-                        f"solc-select install {_version} && solc-select use {_version}"
-                    )
+                # change_solc_version(_version)
 
             else:
                 _version = check_solidity_file_version(path)
@@ -198,16 +286,32 @@ class Cleaner:
             if _version == None:
                 _version = self.insert_pragma_solidity(path)
 
+            version_number = int(_version.split(".")[2])
+
             with open(path, "r") as f:
                 file_contents = f.read()
 
             if clean_type == CleanType.constructor_enum:
                 self._check_constructor_emit(path, _version, file_contents)
             elif clean_type == CleanType.solc_error:
-                self.check_solc_error_json(file_contents, path, _version)
+                if version_number >= 11:
+                    self.check_solc_error_json(
+                        file_contents, path, _version, with_docker=True
+                    )
+                else:
+                    self.check_solc_error_legacy(
+                        file_contents, path, _version, with_docker=True
+                    )
             elif clean_type == CleanType.all:
                 self._check_constructor_emit(path, _version, file_contents)
-                self.check_solc_error_json(file_contents, path, _version)
+                if version_number >= 11:
+                    self.check_solc_error_json(
+                        file_contents, path, _version, with_docker=True
+                    )
+                else:
+                    self.check_solc_error_legacy(
+                        file_contents, path, _version, with_docker=True
+                    )
 
             if shared_processed_files and lock:
                 with lock:
@@ -242,22 +346,25 @@ class Cleaner:
 
     def _clean_it(
         self,
-        chunk,
+        chunks,
         total_files,
         shared_processed_files=None,
         lock=None,
         clean_type: CleanType = 0,
     ):
-        return [
-            self.clean(
+        results = []
+        # set_path_context()
+        for file_path in chunks:
+            # solidity_version = check_solidity_file_version(file_path)
+            result = self.clean(
                 path=Path(file_path),
                 total_files=total_files,
                 shared_processed_files=shared_processed_files,
                 lock=lock,
                 clean_type=clean_type,
             )
-            for file_path in chunk
-        ]
+            results.append(result)
+        return results
 
     def clean_concurrently(
         self,
