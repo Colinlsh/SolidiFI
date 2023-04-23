@@ -63,7 +63,7 @@ def test_clean_list(files):
         "test/files/contracts-dataset/Clean/4164.sol",
         "test/files/contracts-dataset/Clean/2536.sol",
         "test/files/contracts-dataset/Clean/2889.sol",
-        "test/files/contracts-dataset/Clean/3500.sol",
+        "test/files/contracts-dataset/Clean/1678.sol",
     ],
 )
 def test_clean_list_solc(files):
@@ -82,7 +82,7 @@ def test_clean_list_no_pragma(files):
 
 
 @pytest.mark.parametrize(
-    "files", ["test/files/contracts-dataset/Clean/2193.sol"]
+    "files", ["test/files/contracts-dataset/Clean/3665.sol"]
 )
 def test_clean_all(files):
     cleaner = Cleaner()

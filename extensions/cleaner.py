@@ -154,7 +154,7 @@ class Cleaner:
 
         standard_json_input = {
             "language": "Solidity",
-            "sources": {f"{tail}.sol": {"content": file_contents}},
+            "sources": {f"{tail}": {"content": file_contents}},
             "settings": {
                 "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
             },
@@ -193,11 +193,13 @@ class Cleaner:
                 errors = compilation_result["errors"]
                 for error in errors:
                     if error["severity"] == "error":
-                        source_location = error.get("sourceLocation", {})
-                        start = source_location.get("start", 0)
-                        line_number = file_contents[:start].count("\n") + 1
+                        formatted_message: str = error["formattedMessage"]
+                        line_number = formatted_message.split(".sol:")[1].split(
+                            ":"
+                        )[0]
+                        message = error["message"]
                         logger.error(
-                            f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
+                            f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                         )
 
         elif stderr:
@@ -258,11 +260,13 @@ class Cleaner:
                 errors = compilation_result["errors"]
                 for error in errors:
                     if error["severity"] == "error":
-                        source_location = error.get("sourceLocation", {})
-                        start = source_location.get("start", 0)
-                        line_number = file_contents[:start].count("\n") + 1
+                        formatted_message: str = error["formattedMessage"]
+                        line_number = formatted_message.split(".sol:")[1].split(
+                            ":"
+                        )[0]
+                        message = error["message"]
                         logger.error(
-                            f"Error found in {file_path}\n \tError at line {line_number}: {error['message']}"
+                            f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                         )
 
     def clean(
