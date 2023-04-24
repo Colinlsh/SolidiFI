@@ -34,8 +34,9 @@ class CleanType(Enum):
 class Cleaner:
     check_with_docker = False
 
-    def __init__(self) -> None:
+    def __init__(self, check_with_docker: bool = True) -> None:
         self.progress_updater = ProgressUpdater()
+        self.check_with_docker = check_with_docker
 
     def insert_pragma_solidity(self, file_path, version="0.4.26"):
         pragma_line = f"pragma solidity ^{version};\n\n"
@@ -63,39 +64,96 @@ class Cleaner:
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
         stack = []
         brace_indices = []
-        in_single_line_comment = False
-        in_multi_line_comment = False
 
-        for i, c in enumerate(s):
-            # Check for single-line comment start
-            if s[i : i + 2] == "//":
-                in_single_line_comment = True
-            # Check for single-line comment end
-            elif c == "\n" and in_single_line_comment:
-                in_single_line_comment = False
-            # Check for multi-line comment start
-            elif s[i : i + 2] == "/*":
-                in_multi_line_comment = True
-            # Check for multi-line comment end
-            elif s[i - 1 : i + 1] == "*/":
-                in_multi_line_comment = False
+        i = 0
+        while i < len(s):
+            c = s[i]
 
-            # Ignore braces inside comments
-            if in_single_line_comment or in_multi_line_comment:
-                continue
+            if (
+                c == "/"
+                and i + 1 < len(s)
+                and s[i + 1] == "/"
+                and not self.in_comment(s, i)
+            ):
+                i += 2
+                while i < len(s) and s[i] != "\n":
+                    i += 1
 
-            if c == open_brace:
+            elif (
+                c == "/"
+                and i + 1 < len(s)
+                and s[i + 1] == "*"
+                and not self.in_comment(s, i)
+            ):
+                i += 2
+                while i < len(s) - 1 and (s[i] != "*" or s[i + 1] != "/"):
+                    i += 1
+                i += 1
+
+            elif c == '"' and not self.in_comment(s, i):
+                i += 1
+                while i < len(s) and (
+                    s[i] != '"' or (i > 0 and s[i - 1] == "\\")
+                ):
+                    i += 1
+
+            elif c == open_brace and not self.in_comment(s, i):
                 stack.append(i)
-            elif c == close_brace:
+
+            elif c == close_brace and not self.in_comment(s, i):
                 if len(stack) == 0:
                     raise ValueError("Unbalanced braces")
                 open_index = stack.pop()
                 brace_indices.append((open_index, i))
 
+            i += 1
+
         if len(stack) != 0:
             raise ValueError("Unbalanced braces")
 
         return brace_indices
+
+    def in_comment(self, s, i):
+        in_single_line_comment = False
+        in_multi_line_comment = False
+
+        j = 0
+        while j < i:
+            c = s[j]
+
+            if (
+                c == "/"
+                and j + 1 < i
+                and s[j + 1] == "/"
+                and not in_multi_line_comment
+            ):
+                in_single_line_comment = not in_single_line_comment
+                j += 1
+
+            elif (
+                c == "/"
+                and j + 1 < i
+                and s[j + 1] == "*"
+                and not in_single_line_comment
+            ):
+                in_multi_line_comment = not in_multi_line_comment
+                j += 1
+
+            elif (
+                c == "*"
+                and j + 1 < i
+                and s[j + 1] == "/"
+                and in_multi_line_comment
+            ):
+                in_multi_line_comment = not in_multi_line_comment
+                j += 1
+
+            elif c == "\n":
+                in_single_line_comment = False
+
+            j += 1
+
+        return in_single_line_comment or in_multi_line_comment
 
     def replace_constructors(
         self, file_contents: str, contract_names: list[str]
@@ -145,17 +203,35 @@ class Cleaner:
         return file_contents
 
     def count_arguments(self, arg_str: str):
+        if not arg_str:
+            return 0
         return len(arg_str.split(","))
 
+    def is_if_statement(self, error_msg):
+        # Regex pattern to match the specific TypeError
+        line_regex = r"\s*if\s*\((.*?)\)"
+        match = re.search(line_regex, error_msg)
+
+        return bool(match)
+
     def check_dot_value_error(self, file_contents: str, error_msg: str):
-        # Extract the problematic line from the error message
-        line_regex = r"\n\s*(.*);\n\s*\^"
+        # line_regex = r"\s*(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
+        line_regex = (
+            r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
+        )
         line_match = re.search(line_regex, error_msg)
+
         if line_match:
-            line = line_match.group(1)
+            line: str = line_match.group(2)
+            if "return" in line_match.string:
+                line: str = line_match.group(3)
+            elif self.is_if_statement(line_match.string):
+                line: str = line_match.group(3)
+            elif "=" in line:
+                line = line.split("=")[1].strip()
 
             # Extract the function call and its arguments
-            function_call_regex = r"(\w+)\.(\w+)\.value"
+            function_call_regex = r"(.+?)\.(.+?)\.value"
             function_call_match = re.search(function_call_regex, line)
             if function_call_match:
                 contract_name = function_call_match.group(1)
@@ -167,28 +243,38 @@ class Cleaner:
                 if function_args_match:
                     num_args = self.count_arguments(function_args_match[-1])
 
-                    # Find the function header with the same number of arguments
-                    function_header_regex = (
-                        rf"function {function_name}\((.*?)\)"
-                    )
-                    function_headers = re.findall(
-                        function_header_regex, file_contents
+                    # Find the function headers with the same name
+                    function_header_regex = rf"function {function_name}\("
+                    complete_function_headers = re.findall(
+                        rf"(function {function_name}\([^{{]+)", file_contents
                     )
 
-                    for header_args in function_headers:
-                        header_num_args = self.count_arguments(header_args)
+                    for complete_function_header in complete_function_headers:
+                        # Extract the arguments from the function header
+                        function_args_regex = r"\(([^)]+)\)"
+                        function_args_match = re.search(
+                            function_args_regex, complete_function_header
+                        )
+                        if function_args_match:
+                            header_args = function_args_match.group(1)
+                            header_num_args = self.count_arguments(header_args)
 
-                        if header_num_args == num_args:
-                            new_function_header = rf"function {function_name}({header_args}) payable"
-                            function_header = (
-                                rf"function {function_name}({header_args})"
-                            )
-                            updated_file_contents = re.sub(
-                                re.escape(function_header),
-                                new_function_header,
-                                file_contents,
-                            )
-                            return updated_file_contents
+                            # Check if the number of arguments match and if the payable modifier is already present
+                            if (
+                                header_num_args == num_args
+                                and "payable" not in complete_function_header
+                            ):
+                                new_function_header = (
+                                    complete_function_header.replace(
+                                        ")", ") payable", 1
+                                    )
+                                )
+                                updated_file_contents = file_contents.replace(
+                                    complete_function_header,
+                                    new_function_header,
+                                    1,
+                                )
+                                return updated_file_contents
                     else:
                         logger.error(
                             "Function header not found in the contract code."
@@ -200,12 +286,77 @@ class Cleaner:
         else:
             logger.error("Problematic line not found in the error message.")
 
+        return None
+
+    def check_constructor_error(self, file_contents: str, error_msg: str):
+        # Extract the problematic line from the error message
+        line_regex = r"\n\s*(.*);\n\s*\^"
+        line_match = re.search(line_regex, error_msg)
+        if line_match:
+            line = line_match.group(1)
+
+            # Extract the constructor call
+            constructor_call_regex = r"\(new (\w+)\)\.value"
+            constructor_call_match = re.search(constructor_call_regex, line)
+            if constructor_call_match:
+                contract_name = constructor_call_match.group(1)
+
+                print(f"Contract: {contract_name}")
+
+                # Count the number of arguments in the problematic line
+                function_args_regex = r"\(([^)]+)\)"
+                function_args_match = re.findall(function_args_regex, line)
+                if function_args_match:
+                    num_args = self.count_arguments(function_args_match[-1])
+
+                    # Find the constructor with the same number of arguments
+                    constructor_header_regex = rf"constructor\((.*?)\)"
+                    constructor_headers = re.findall(
+                        constructor_header_regex, file_contents
+                    )
+
+                    for header_args in constructor_headers:
+                        header_num_args = self.count_arguments(header_args)
+
+                        if header_num_args == num_args:
+                            new_constructor_header = (
+                                rf"constructor({header_args}) payable"
+                            )
+                            constructor_header = rf"constructor({header_args})"
+                            updated_contract_code = re.sub(
+                                re.escape(constructor_header),
+                                new_constructor_header,
+                                file_contents,
+                            )
+                            return updated_contract_code
+                    else:
+                        logger.error(
+                            "Constructor header not found in the contract code."
+                        )
+                else:
+                    logger.error("Arguments not found in the problematic line.")
+            else:
+                logger.error(
+                    "Constructor call not found in the problematic line."
+                )
+        else:
+            logger.error("Problematic line not found in the error message.")
+
+        return None
+
     def is_payable_error(self, error_msg):
         # Regex pattern to match the specific TypeError
         error_pattern = r"TypeError: Member \"value\" not found or not visible after argument-dependent lookup"
         match = re.search(error_pattern, error_msg)
 
         return bool(match)
+
+    def is_payable_constructor_error(self, error_msg):
+        # Regex pattern to match the specific TypeError
+        pattern_regex = r"\(new (\w+)\)\.value"
+        pattern_match = re.search(pattern_regex, error_msg)
+
+        return bool(pattern_match)
 
     def check_solc_error_json(
         self,
@@ -264,9 +415,16 @@ class Cleaner:
                         )[0]
                         message = error["message"]
                         if self.is_payable_error(formatted_message):
-                            updated = self.check_dot_value_error(
-                                file_contents, formatted_message
-                            )
+                            if self.is_payable_constructor_error(
+                                formatted_message
+                            ):
+                                updated = self.check_constructor_error(
+                                    file_contents, formatted_message
+                                )
+                            else:
+                                updated = self.check_dot_value_error(
+                                    file_contents, formatted_message
+                                )
 
                             if not self.check_solc_error_json(
                                 updated,
