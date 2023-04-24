@@ -144,13 +144,77 @@ class Cleaner:
 
         return file_contents
 
+    def count_arguments(self, arg_str: str):
+        return len(arg_str.split(","))
+
+    def check_dot_value_error(self, file_contents: str, error_msg: str):
+        # Extract the problematic line from the error message
+        line_regex = r"\n\s*(.*);\n\s*\^"
+        line_match = re.search(line_regex, error_msg)
+        if line_match:
+            line = line_match.group(1)
+
+            # Extract the function call and its arguments
+            function_call_regex = r"(\w+)\.(\w+)\.value"
+            function_call_match = re.search(function_call_regex, line)
+            if function_call_match:
+                contract_name = function_call_match.group(1)
+                function_name = function_call_match.group(2)
+
+                # Count the number of arguments in the problematic line
+                function_args_regex = r"\(([^)]+)\)"
+                function_args_match = re.findall(function_args_regex, line)
+                if function_args_match:
+                    num_args = self.count_arguments(function_args_match[-1])
+
+                    # Find the function header with the same number of arguments
+                    function_header_regex = (
+                        rf"function {function_name}\((.*?)\)"
+                    )
+                    function_headers = re.findall(
+                        function_header_regex, file_contents
+                    )
+
+                    for header_args in function_headers:
+                        header_num_args = self.count_arguments(header_args)
+
+                        if header_num_args == num_args:
+                            new_function_header = rf"function {function_name}({header_args}) payable"
+                            function_header = (
+                                rf"function {function_name}({header_args})"
+                            )
+                            updated_file_contents = re.sub(
+                                re.escape(function_header),
+                                new_function_header,
+                                file_contents,
+                            )
+                            return updated_file_contents
+                    else:
+                        logger.error(
+                            "Function header not found in the contract code."
+                        )
+                else:
+                    logger.error("Arguments not found in the problematic line.")
+            else:
+                logger.error("Function call not found in the problematic line.")
+        else:
+            logger.error("Problematic line not found in the error message.")
+
+    def is_payable_error(self, error_msg):
+        # Regex pattern to match the specific TypeError
+        error_pattern = r"TypeError: Member \"value\" not found or not visible after argument-dependent lookup"
+        match = re.search(error_pattern, error_msg)
+
+        return bool(match)
+
     def check_solc_error_json(
         self,
         file_contents: str,
         file_path: str,
-        version: str = None,
+        version: str,
         solc_bin_path: str = None,
     ):
+        has_error = False
         head, tail = os.path.split(file_path)
 
         standard_json_input = {
@@ -173,7 +237,6 @@ class Cleaner:
             if solc_bin_path is not None:
                 command = command.replace("solc", solc_bin_path)
 
-            # change_solc_version(version)
             stdout, stderr, exit_code = run_subprocess(
                 f"{command}",
                 input_data=standard_json_input_str,
@@ -194,14 +257,30 @@ class Cleaner:
                 errors = compilation_result["errors"]
                 for error in errors:
                     if error["severity"] == "error":
+                        has_error = True
                         formatted_message: str = error["formattedMessage"]
                         line_number = formatted_message.split(".sol:")[1].split(
                             ":"
                         )[0]
                         message = error["message"]
-                        logger.error(
-                            f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
-                        )
+                        if self.is_payable_error(formatted_message):
+                            updated = self.check_dot_value_error(
+                                file_contents, formatted_message
+                            )
+
+                            if not self.check_solc_error_json(
+                                updated,
+                                file_path,
+                                version,
+                            ):
+                                with open(file_path, "w") as f:
+                                    f.write(updated)
+                        else:
+                            logger.error(
+                                f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
+                            )
+
+            return has_error
 
         elif stderr:
             logger.error(stderr)

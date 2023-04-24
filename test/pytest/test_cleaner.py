@@ -63,12 +63,12 @@ def test_clean_list(files):
         "test/files/contracts-dataset/Clean/4164.sol",
         "test/files/contracts-dataset/Clean/2536.sol",
         "test/files/contracts-dataset/Clean/2889.sol",
-        "test/files/contracts-dataset/Clean/1486.sol",
+        "test/files/contracts-dataset/Clean/3911.sol",
     ],
 )
 def test_clean_list_solc(files):
     cleaner = Cleaner()
-    cleaner.check_with_docker = False
+    cleaner.check_with_docker = True
     cleaner.clean(files, 0, clean_type=CleanType.solc_error)
 
 

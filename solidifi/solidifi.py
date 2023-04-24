@@ -11,6 +11,7 @@ import ijson
 import re, os
 import configparser
 from extensions.cleaner import Cleaner
+from extensions.logger import LoggerSetup
 
 from extensions.utils.helpers import check_solidity_file_version, run_subprocess
 
@@ -22,6 +23,8 @@ from solidifi.inject_file import (
     preprocess_json_file,
     update,
 )
+
+logger = LoggerSetup.get_logger(__name__)
 
 
 @dataclass
@@ -76,7 +79,9 @@ class Solidifi:
             f"solc --ast-json {self.cur_contr_file} -o {ast_json_files_dir} --overwrite"
         )
         if exit_code != 0:
-            print(f"Solidity compiler returned an error (code: {exit_code}):")
+            logger.error(
+                f"Solidity compiler returned an error (code: {exit_code}):"
+            )
             error_msg = stderr.decode("utf-8")
             # print(error_msg)
             # Read the original file
@@ -108,10 +113,10 @@ class Solidifi:
                 try:
                     self.cur_contr_ast_data = json.loads(file_contents)
                 except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON: {e}")
+                    logger.error(f"Error decoding JSON: {e}")
                     self.cur_contr_ast_data = None
             else:
-                print(
+                logger.error(
                     f"File '{ast_json_file}' is empty or contains only whitespace."
                 )
                 self.cur_contr_ast_data = None
@@ -131,7 +136,7 @@ class Solidifi:
                 for data in self.BugLog:
                     writer.writerow(data)
         except IOError:
-            # print("I/O error")
+            logger.error("I/O error")
             traceback.print_exc()
 
         os.remove(tmp_buggy_file_path)
@@ -175,7 +180,7 @@ class Solidifi:
             BIP = self.get_potential_locs(self.cur_contr_ast_data, bug_forms)
             for loc in reversed(BIP):
                 if not bug_seq < len(bugfiles):
-                    # print("Running out of bug snippets")
+                    logger.error("Running out of bug snippets")
                     break
                 bug_f: BufferedReader = open(
                     os.path.join(cur_bug_dir, bugfiles[bug_seq]), "rb"
