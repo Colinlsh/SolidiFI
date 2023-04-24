@@ -24,21 +24,25 @@ def check_solidity_file_version(file_path) -> str:
     with open(file_path, "r") as f:
         content = f.read()
         match = pragma_pattern.search(content)
-
         if match:
             # Extract version number and clean the string
             solidity_version = re.sub(r"[^0-9.]", "", match.group(1)).strip()
+            if "^" in match.group(1):
+                version_major = solidity_version.split(".")[1]
+
+                if int(version_major) == 4:
+                    solidity_version = "0.4.26"
 
     if solidity_version is None:
         return None
 
-    # change_solc_version(solidity_version)
+    change_solc_version(solidity_version)
 
     # return get_solc_binary(solidity_version), solidity_version
     return solidity_version
 
 
-def change_solc_version(version):
+def change_solc_version(version: str, has_caret_symbol=False) -> None:
     _current_version, _, _ = run_subprocess(f"solc --version")
     _current_available_versions, _, _ = run_subprocess(f"solc-select versions")
 
@@ -133,7 +137,7 @@ def get_solc_binary(
 
 
 def compile_with_docker(
-    version: str, file_contents: str, logger: Logger
+    version: str, file_contents: str
 ) -> Tuple[str, str, str]:
     run_subprocess(
         f"docker pull --platform linux/amd64 ethereum/solc:{version}"

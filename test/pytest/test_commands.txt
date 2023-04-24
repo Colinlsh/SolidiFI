@@ -10,3 +10,6 @@ pytest /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/Sol
 
 pytest -k "test_check_concurrently and Clean" /Users/colinlsh88888888/Desktop/code/work/SIT/Integrated_Tool/combine/SolidiFI/test/unittest/test_cleaner.py
 
+docker run --platform linux/amd64 --rm -i -a stdin -a stdout -a stderr ethereum/solc:0.4.15 --standard-json < test/files/contracts-dataset/Clean/3484.sol
+
+

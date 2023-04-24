@@ -32,10 +32,12 @@ class CleanType(Enum):
 
 
 class Cleaner:
+    check_with_docker = False
+
     def __init__(self) -> None:
         self.progress_updater = ProgressUpdater()
 
-    def insert_pragma_solidity(self, file_path, version="0.4.25"):
+    def insert_pragma_solidity(self, file_path, version="0.4.26"):
         pragma_line = f"pragma solidity ^{version};\n\n"
 
         with open(file_path, "r") as f:
@@ -148,7 +150,6 @@ class Cleaner:
         file_path: str,
         version: str = None,
         solc_bin_path: str = None,
-        with_docker: bool = None,
     ):
         head, tail = os.path.split(file_path)
 
@@ -162,9 +163,9 @@ class Cleaner:
 
         standard_json_input_str = json.dumps(standard_json_input)
 
-        if with_docker:
+        if self.check_with_docker:
             stdout, stderr, exit_code = compile_with_docker(
-                version, standard_json_input_str, logger
+                version, standard_json_input_str
             )
         else:
             command = f"solc --standard-json"
@@ -211,7 +212,6 @@ class Cleaner:
         file_path: str,
         version: str = None,
         solc_bin_path: str = None,
-        with_docker: bool = None,
     ):
         head, tail = os.path.split(file_path)
         temp_file_path = os.path.join(head, f"{tail}")
@@ -220,9 +220,9 @@ class Cleaner:
         with open(temp_file_path, "w") as temp_file:
             temp_file.write(file_contents)
 
-        if with_docker:
+        if self.check_with_docker:
             stdout, stderr, exit_code = compile_with_docker(
-                version, temp_file_path, logger
+                version, temp_file_path
             )
         else:
             command = f"solc --combined-json abi,bin {temp_file_path}"
@@ -282,7 +282,7 @@ class Cleaner:
             if solidity_version != "0":
                 _version = solidity_version
 
-                # change_solc_version(_version)
+                change_solc_version(_version)
 
             else:
                 _version = check_solidity_file_version(path)
@@ -301,25 +301,17 @@ class Cleaner:
                 )
             elif clean_type == CleanType.solc_error:
                 if version_number >= 11:
-                    self.check_solc_error_json(
-                        file_contents, path, _version, with_docker=True
-                    )
+                    self.check_solc_error_json(file_contents, path, _version)
                 else:
-                    self.check_solc_error_legacy(
-                        file_contents, path, _version, with_docker=True
-                    )
+                    self.check_solc_error_legacy(file_contents, path, _version)
             elif clean_type == CleanType.all:
                 _cleansed = self._check_constructor_emit(
                     path, _version, file_contents
                 )
                 if version_number >= 11:
-                    self.check_solc_error_json(
-                        _cleansed, path, _version, with_docker=True
-                    )
+                    self.check_solc_error_json(_cleansed, path, _version)
                 else:
-                    self.check_solc_error_legacy(
-                        _cleansed, path, _version, with_docker=True
-                    )
+                    self.check_solc_error_legacy(_cleansed, path, _version)
 
             if shared_processed_files and lock:
                 with lock:
@@ -365,7 +357,6 @@ class Cleaner:
         results = []
         # set_path_context()
         for file_path in chunks:
-            # solidity_version = check_solidity_file_version(file_path)
             result = self.clean(
                 path=Path(file_path),
                 total_files=total_files,
