@@ -214,7 +214,7 @@ class Cleaner:
         with_docker: bool = None,
     ):
         head, tail = os.path.split(file_path)
-        temp_file_path = os.path.join(head, f"{tail}.sol")
+        temp_file_path = os.path.join(head, f"{tail}")
 
         # Create a temporary file with the contract content
         with open(temp_file_path, "w") as temp_file:
@@ -296,7 +296,9 @@ class Cleaner:
                 file_contents = f.read()
 
             if clean_type == CleanType.constructor_enum:
-                self._check_constructor_emit(path, _version, file_contents)
+                _cleansed = self._check_constructor_emit(
+                    path, _version, file_contents
+                )
             elif clean_type == CleanType.solc_error:
                 if version_number >= 11:
                     self.check_solc_error_json(
@@ -307,14 +309,16 @@ class Cleaner:
                         file_contents, path, _version, with_docker=True
                     )
             elif clean_type == CleanType.all:
-                self._check_constructor_emit(path, _version, file_contents)
+                _cleansed = self._check_constructor_emit(
+                    path, _version, file_contents
+                )
                 if version_number >= 11:
                     self.check_solc_error_json(
-                        file_contents, path, _version, with_docker=True
+                        _cleansed, path, _version, with_docker=True
                     )
                 else:
                     self.check_solc_error_legacy(
-                        file_contents, path, _version, with_docker=True
+                        _cleansed, path, _version, with_docker=True
                     )
 
             if shared_processed_files and lock:
@@ -347,6 +351,8 @@ class Cleaner:
 
         with open(path, "w") as f:
             f.write(file_contents)
+
+        return file_contents
 
     def _clean_it(
         self,
