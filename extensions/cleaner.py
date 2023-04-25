@@ -565,6 +565,9 @@ class Cleaner:
         clean_type: CleanType = 0,
     ) -> None:
         try:
+            _version_fixed = None
+            _version = None
+
             with open(path, "r") as f:
                 file_contents = f.read()
 
