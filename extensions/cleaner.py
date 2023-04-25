@@ -6,7 +6,9 @@ from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
 import re
-from typing import List
+from typing import List, Tuple
+
+import regex
 from .logger import LoggerSetup
 
 from .utils.helpers import (
@@ -14,6 +16,8 @@ from .utils.helpers import (
     check_solidity_file_version,
     chunks,
     compile_with_docker,
+    fix_pragma,
+    is_pragma_invalid,
     run_subprocess,
     set_path_context,
 )
@@ -38,7 +42,9 @@ class Cleaner:
         self.progress_updater = ProgressUpdater()
         self.check_with_docker = check_with_docker
 
-    def insert_pragma_solidity(self, file_path, version="0.4.26"):
+    def insert_pragma_solidity(
+        self, file_path, version="0.4.26"
+    ) -> Tuple[str, str]:
         pragma_line = f"pragma solidity ^{version};\n\n"
 
         with open(file_path, "r") as f:
@@ -49,7 +55,7 @@ class Cleaner:
         with open(file_path, "w") as f:
             f.write(updated_content)
 
-        return check_solidity_file_version(file_path)
+        return check_solidity_file_version(file_path), updated_content
 
     def get_contract_names(self, file_contents: str) -> list[str]:
         # Parse the Solidity code
@@ -155,6 +161,21 @@ class Cleaner:
 
         return in_single_line_comment or in_multi_line_comment
 
+    def replace_old_to_new_constructors(
+        self, file_contents: str, contract_names: List[str]
+    ) -> str:
+        for contract_name in contract_names:
+            # Match constructors with old syntax in the given contract_name
+            old_constructor_pattern = rf"function\s+{contract_name}\s*\(([^)]*)\)\s*(public|internal|private|external)"
+            new_constructor = r"constructor(\1) \2"
+
+            # Replace old constructors with new syntax
+            file_contents = re.sub(
+                old_constructor_pattern, new_constructor, file_contents
+            )
+
+        return file_contents
+
     def replace_constructors(
         self, file_contents: str, contract_names: list[str]
     ) -> str:
@@ -214,79 +235,103 @@ class Cleaner:
 
         return bool(match)
 
+    def is_semi_colon_parenthesis(self, error_msg):
+        error_pattern = r"ParserError: Expected ';'\s+but got '}'"
+        match = re.search(error_pattern, error_msg)
+
+        return bool(match)
+
     def check_dot_value_error(self, file_contents: str, error_msg: str):
-        # line_regex = r"\s*(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
-        line_regex = (
-            r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
+        # line_regex = (
+        #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
+        # )
+        # old and working pattern
+        # line_regex = (
+        #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
+        # )
+        line_regex = r"\s*(return\s*|if\s*\()?\s*(\w+\.\w+\.value\((?:[^()]*|\([^)]*\))\)\([^)]*\))"
+
+        line_match = regex.search(line_regex, error_msg)
+        line = None
+
+        if not line_match:
+            line_regex = r"(\w+\.\w+\.value\([^)]*\)[^;]*\(\))"
+            line_match = re.search(line_regex, error_msg)
+            line = line_match.group(1)
+            if not line_match:
+                raise Exception(
+                    "Problematic dot value error line not found in the error message."
+                )
+
+        if not line:
+            line = line_match.group(2)
+        if self.is_if_statement(error_msg):
+            line = line_match.group(3)
+        elif "=" in line:
+            line = line.split("=")[1].strip()
+
+        function_call_regex = r"(.+?)\.(.+?)\.value"
+        function_call_match = regex.search(function_call_regex, line)
+
+        if not function_call_match:
+            logger.error("Function call not found in the problematic line.")
+            return None
+
+        contract_name = function_call_match.group(1)
+        function_name = function_call_match.group(2)
+
+        function_args_regex = r"\(([^)]*)\)"
+        function_args_match = regex.findall(function_args_regex, line)
+
+        if not function_args_match:
+            logger.error("Arguments not found in the problematic line.")
+            return None
+
+        num_args = self.count_arguments(function_args_match[-1])
+
+        function_header_regex = rf"function {function_name}\("
+        complete_function_headers = regex.findall(
+            rf"(function {function_name}\([^{{]+)", file_contents
         )
-        line_match = re.search(line_regex, error_msg)
 
-        if line_match:
-            line: str = line_match.group(2)
-            if "return" in line_match.string:
-                line: str = line_match.group(3)
-            elif self.is_if_statement(line_match.string):
-                line: str = line_match.group(3)
-            elif "=" in line:
-                line = line.split("=")[1].strip()
+        for complete_function_header in complete_function_headers:
+            function_args_match = regex.search(
+                function_args_regex, complete_function_header
+            )
 
-            # Extract the function call and its arguments
-            function_call_regex = r"(.+?)\.(.+?)\.value"
-            function_call_match = re.search(function_call_regex, line)
-            if function_call_match:
-                contract_name = function_call_match.group(1)
-                function_name = function_call_match.group(2)
+            if not function_args_match:
+                continue
 
-                # Count the number of arguments in the problematic line
-                function_args_regex = r"\(([^)]+)\)"
-                function_args_match = re.findall(function_args_regex, line)
-                if function_args_match:
-                    num_args = self.count_arguments(function_args_match[-1])
+            header_args = function_args_match.group(1)
+            header_num_args = self.count_arguments(header_args)
 
-                    # Find the function headers with the same name
-                    function_header_regex = rf"function {function_name}\("
-                    complete_function_headers = re.findall(
-                        rf"(function {function_name}\([^{{]+)", file_contents
-                    )
+            if (
+                header_num_args == num_args
+                and "payable" not in complete_function_header
+            ):
+                new_function_header = complete_function_header.replace(
+                    ")", ") payable", 1
+                )
+                updated_file_contents = file_contents.replace(
+                    complete_function_header, new_function_header, 1
+                )
+                return updated_file_contents
 
-                    for complete_function_header in complete_function_headers:
-                        # Extract the arguments from the function header
-                        function_args_regex = r"\(([^)]+)\)"
-                        function_args_match = re.search(
-                            function_args_regex, complete_function_header
-                        )
-                        if function_args_match:
-                            header_args = function_args_match.group(1)
-                            header_num_args = self.count_arguments(header_args)
-
-                            # Check if the number of arguments match and if the payable modifier is already present
-                            if (
-                                header_num_args == num_args
-                                and "payable" not in complete_function_header
-                            ):
-                                new_function_header = (
-                                    complete_function_header.replace(
-                                        ")", ") payable", 1
-                                    )
-                                )
-                                updated_file_contents = file_contents.replace(
-                                    complete_function_header,
-                                    new_function_header,
-                                    1,
-                                )
-                                return updated_file_contents
-                    else:
-                        logger.error(
-                            "Function header not found in the contract code."
-                        )
-                else:
-                    logger.error("Arguments not found in the problematic line.")
-            else:
-                logger.error("Function call not found in the problematic line.")
-        else:
-            logger.error("Problematic line not found in the error message.")
-
+        logger.error("Function header not found in the contract code.")
         return None
+
+    def check_parse_error(self, file_contents: str, error_msg: str) -> str:
+        # The pattern will match the modifier declaration and the underscore
+        pattern = r"(modifier\s+\w+\s+\{[\s\S]*?)(\_)([\s\S]*?\})"
+
+        # The replacement function inserts a semicolon after the underscore
+        def add_semicolon(match):
+            return match.group(1) + match.group(2) + ";" + match.group(3)
+
+        # Apply the replacement function to all matching patterns in the code
+        corrected_code = re.sub(pattern, add_semicolon, file_contents)
+
+        return corrected_code
 
     def check_constructor_error(self, file_contents: str, error_msg: str):
         # Extract the problematic line from the error message
@@ -301,7 +346,7 @@ class Cleaner:
             if constructor_call_match:
                 contract_name = constructor_call_match.group(1)
 
-                print(f"Contract: {contract_name}")
+                # print(f"Contract: {contract_name}")
 
                 # Count the number of arguments in the problematic line
                 function_args_regex = r"\(([^)]+)\)"
@@ -329,18 +374,16 @@ class Cleaner:
                                 file_contents,
                             )
                             return updated_contract_code
-                    else:
-                        logger.error(
-                            "Constructor header not found in the contract code."
-                        )
                 else:
-                    logger.error("Arguments not found in the problematic line.")
+                    raise Exception(
+                        "Arguments not found in the problematic line."
+                    )
             else:
-                logger.error(
+                raise Exception(
                     "Constructor call not found in the problematic line."
                 )
         else:
-            logger.error("Problematic line not found in the error message.")
+            raise Exception("Problematic line not found in the error message.")
 
         return None
 
@@ -414,6 +457,7 @@ class Cleaner:
                             ":"
                         )[0]
                         message = error["message"]
+                        updated = None
                         if self.is_payable_error(formatted_message):
                             if self.is_payable_constructor_error(
                                 formatted_message
@@ -425,7 +469,16 @@ class Cleaner:
                                 updated = self.check_dot_value_error(
                                     file_contents, formatted_message
                                 )
+                        elif self.is_semi_colon_parenthesis(formatted_message):
+                            updated = self.check_parse_error(
+                                file_contents, formatted_message
+                            )
+                        else:
+                            logger.error(
+                                f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
+                            )
 
+                        if updated:
                             if not self.check_solc_error_json(
                                 updated,
                                 file_path,
@@ -433,10 +486,6 @@ class Cleaner:
                             ):
                                 with open(file_path, "w") as f:
                                     f.write(updated)
-                        else:
-                            logger.error(
-                                f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
-                            )
 
             return has_error
 
@@ -516,6 +565,9 @@ class Cleaner:
         clean_type: CleanType = 0,
     ) -> None:
         try:
+            with open(path, "r") as f:
+                file_contents = f.read()
+
             if solidity_version != "0":
                 _version = solidity_version
 
@@ -525,12 +577,14 @@ class Cleaner:
                 _version = check_solidity_file_version(path)
 
             if _version == None:
-                _version = self.insert_pragma_solidity(path)
+                if is_pragma_invalid(file_contents):
+                    file_contents, _version_fixed = fix_pragma(file_contents)
+                if _version_fixed == None:
+                    _version, file_contents = self.insert_pragma_solidity(path)
+                else:
+                    _version = _version_fixed
 
             version_number = int(_version.split(".")[2])
-
-            with open(path, "r") as f:
-                file_contents = f.read()
 
             if clean_type == CleanType.constructor_enum:
                 _cleansed = self._check_constructor_emit(
@@ -572,6 +626,14 @@ class Cleaner:
 
             # Replace constructors for each contract
             file_contents = self.replace_constructors(
+                file_contents, contract_names
+            )
+        else:
+            # Get the contract names
+            contract_names = self.get_contract_names(file_contents)
+
+            # Replace constructors for each contract
+            file_contents = self.replace_old_to_new_constructors(
                 file_contents, contract_names
             )
 

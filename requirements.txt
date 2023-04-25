@@ -6,4 +6,5 @@ pandas
 pytest
 solc-select
 solidity-parser
+regex
 -e .

@@ -16,29 +16,54 @@ def set_path_context():
     )
 
 
-def check_solidity_file_version(file_path) -> str:
+def is_pragma_invalid(solidity_code):
+    pattern = r"(pragma\s+solidity\s+\d+)\s*\.\s*(\d+)\s*\.\s*(\d+);?"
+    match = re.search(pattern, solidity_code)
+    return match is not None
+
+
+def fix_pragma(file_contents: str):
+    pattern = r"(pragma\s+solidity\s+\d+)\s*\.\s*(\d+)\s*\.\s*(\d+);?"
+    fixed_code = re.sub(pattern, r"\1.\2.\3;", file_contents)
+
+    return fixed_code, check_solidity_file_version(file_content=fixed_code)
+
+
+def check_solidity_file_version(
+    file_path: str = "", file_content: str = ""
+) -> str:
     solidity_version = None
     pragma_pattern = re.compile(r"pragma\s+solidity\s+([\^>=<]*\d+\.\d+\.\d+);")
 
-    # Check solidity version
-    with open(file_path, "r") as f:
-        content = f.read()
-        match = pragma_pattern.search(content)
-        if match:
-            # Extract version number and clean the string
-            solidity_version = re.sub(r"[^0-9.]", "", match.group(1)).strip()
-            if "^" in match.group(1):
-                version_major = solidity_version.split(".")[1]
+    if file_content:
+        solidity_version = match_search_pragma(pragma_pattern, file_content)
+    else:
+        # Check solidity version
+        with open(file_path, "r") as f:
+            content = f.read()
 
-                if int(version_major) == 4:
-                    solidity_version = "0.4.26"
+            solidity_version = match_search_pragma(pragma_pattern, content)
 
     if solidity_version is None:
         return None
 
-    change_solc_version(solidity_version)
+    # change_solc_version(solidity_version)
 
-    # return get_solc_binary(solidity_version), solidity_version
+    return solidity_version
+
+
+def match_search_pragma(pragma_pattern, content):
+    solidity_version = None
+    match = pragma_pattern.search(content)
+    if match:
+        # Extract version number and clean the string
+        solidity_version = re.sub(r"[^0-9.]", "", match.group(1)).strip()
+        if "^" in match.group(1):
+            version_major = solidity_version.split(".")[1]
+
+            if int(version_major) == 4:
+                solidity_version = "0.4.26"
+
     return solidity_version
 
 
