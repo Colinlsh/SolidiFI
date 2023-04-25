@@ -12,6 +12,7 @@ import regex
 from .logger import LoggerSetup
 
 from .utils.helpers import (
+    DockerSolcCompileType,
     change_solc_version,
     check_solidity_file_version,
     chunks,
@@ -57,10 +58,29 @@ class Cleaner:
 
         return check_solidity_file_version(file_path), updated_content
 
-    def get_contract_names(self, file_contents: str) -> list[str]:
-        # Parse the Solidity code
-        source_unit = parser.parse(file_contents)
+    def get_contract_names(
+        self, file_contents: str, version: str = ""
+    ) -> list[str]:
+        # # Parse the Solidity code
+        # stdout, stderr, returncode = compile_with_docker(
+        #     version, file_contents, DockerSolcCompileType.abi_compact_json
+        # )
 
+        # if returncode == 0:
+        #     # Extract JSON data from the compiler output
+        #     json_data = stdout.split("======= <stdin> =======")[1].strip()
+
+        #     # Load JSON data into a Python dictionary
+        #     compilation_output = json.loads(json_data)
+        #     contract_names = [
+        #         _node["name"]
+        #         for _node in compilation_output["nodes"]
+        #         if _node["nodeType"] == "ContractDefinition"
+        #     ]
+
+        #     return contract_names
+
+        source_unit = parser.parse(file_contents)
         return [
             node["name"]
             for node in source_unit["children"]
@@ -241,6 +261,18 @@ class Cleaner:
 
         return bool(match)
 
+    def is_require(self, error_msg):
+        require_pattern = r"require\((.*?)\)"
+        match = re.search(require_pattern, error_msg)
+
+        return bool(match)
+
+    def is_return(self, error_msg):
+        return_pattern = r"return\s+(\w+\.\w+\.value\(.*\)\(.*\))"
+        match = re.search(return_pattern, error_msg)
+
+        return bool(match)
+
     def check_dot_value_error(self, file_contents: str, error_msg: str):
         # line_regex = (
         #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
@@ -249,26 +281,32 @@ class Cleaner:
         # line_regex = (
         #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
         # )
-        line_regex = r"\s*(return\s*|if\s*\()?\s*(\w+\.\w+\.value\((?:[^()]*|\([^)]*\))\)\([^)]*\))"
-
-        line_match = regex.search(line_regex, error_msg)
+        # line_regex = r"\s*(return\s*|if\s*\()?\s*(\w+\.\w+\.value\((?:[^()]*|\([^)]*\))\)\([^)]*\))"
         line = None
+        error_msg = error_msg.split("\n")[1].strip().replace(";", "")
 
-        if not line_match:
-            line_regex = r"(\w+\.\w+\.value\([^)]*\)[^;]*\(\))"
-            line_match = re.search(line_regex, error_msg)
+        if self.is_if_statement(error_msg):
+            line_match = re.search(
+                r"if\s*\(.*?\s*([\w_.]+\.\w+\.value\(.*?\)\(.*?\)).*\)",
+                error_msg,
+            )
             line = line_match.group(1)
-            if not line_match:
-                raise Exception(
-                    "Problematic dot value error line not found in the error message."
-                )
+        elif self.is_require(error_msg):
+            line_match = regex.search(
+                r"require\((.*?\.value\(.*?\)\(.*?\))\)", error_msg
+            )
+            line = line_match.group(1)
+        else:
+            line_match = re.search(
+                r"\w+\.\w+\.value\([^)]*\)\([^)]*\)",
+                error_msg,
+            )
+            line = line_match.group(0)
 
         if not line:
-            line = line_match.group(2)
-        if self.is_if_statement(error_msg):
-            line = line_match.group(3)
-        elif "=" in line:
-            line = line.split("=")[1].strip()
+            raise Exception(
+                "Problematic dot value error line not found in the error message."
+            )
 
         function_call_regex = r"(.+?)\.(.+?)\.value"
         function_call_match = regex.search(function_call_regex, line)
@@ -401,14 +439,44 @@ class Cleaner:
 
         return bool(pattern_match)
 
+    def add_param_description(
+        self, contract_code: str, error_message: str
+    ) -> str:
+        # Create a regex pattern to match the parameter name in the error message
+        param_pattern = r"param (\w+)"
+
+        # Find the first match in the error message
+        match = re.search(param_pattern, error_message)
+
+        param = match.group(1)
+        # Create a regex pattern to find the @param line
+        param_pattern = rf"@param {param}"
+
+        # Find all the occurrences of the pattern in the contract code
+        matches = [match for match in re.finditer(param_pattern, contract_code)]
+
+        # Iterate through the matches and update each occurrence with a simple description
+        updated_contract_code = contract_code
+        for match in matches:
+            updated_line = f"@param {param} {param}\n"
+            updated_contract_code = (
+                updated_contract_code[: match.start()]
+                + updated_line
+                + updated_contract_code[match.end() :]
+            )
+
+        return updated_contract_code
+
     def check_solc_error_json(
         self,
         file_contents: str,
         file_path: str,
         version: str,
         solc_bin_path: str = None,
-    ):
+    ) -> Tuple[bool, str]:
         has_error = False
+        updated = None
+
         head, tail = os.path.split(file_path)
 
         standard_json_input = {
@@ -453,12 +521,13 @@ class Cleaner:
                     if error["severity"] == "error":
                         has_error = True
                         formatted_message: str = error["formattedMessage"]
-                        line_number = formatted_message.split(".sol:")[1].split(
-                            ":"
-                        )[0]
                         message = error["message"]
-                        updated = None
+                        line_number = "no line number"
+
                         if self.is_payable_error(formatted_message):
+                            line_number = formatted_message.split(".sol:")[
+                                1
+                            ].split(":")[0]
                             if self.is_payable_constructor_error(
                                 formatted_message
                             ):
@@ -470,24 +539,36 @@ class Cleaner:
                                     file_contents, formatted_message
                                 )
                         elif self.is_semi_colon_parenthesis(formatted_message):
+                            line_number = formatted_message.split(".sol:")[
+                                1
+                            ].split(":")[0]
                             updated = self.check_parse_error(
                                 file_contents, formatted_message
                             )
+                        elif "DocstringParsingError" == error["type"]:
+                            updated = self.add_param_description(
+                                file_contents, formatted_message
+                            )
                         else:
+                            line_number = formatted_message.split(".sol:")[
+                                1
+                            ].split(":")[0]
                             logger.error(
                                 f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                             )
 
                         if updated:
-                            if not self.check_solc_error_json(
-                                updated,
-                                file_path,
-                                version,
-                            ):
+                            (
+                                _has_error,
+                                _,
+                            ) = self.check_solc_error_json(
+                                updated, file_path, version
+                            )
+                            if not _has_error:
                                 with open(file_path, "w") as f:
                                     f.write(updated)
 
-            return has_error
+            return has_error, file_contents if not updated else updated
 
         elif stderr:
             logger.error(stderr)
@@ -594,18 +675,15 @@ class Cleaner:
                     path, _version, file_contents
                 )
             elif clean_type == CleanType.solc_error:
-                if version_number >= 11:
-                    self.check_solc_error_json(file_contents, path, _version)
-                else:
-                    self.check_solc_error_legacy(file_contents, path, _version)
+                self._solc_check(path, _version, version_number, file_contents)
             elif clean_type == CleanType.all:
+                _, file_contents = self._solc_check(
+                    path, _version, version_number, file_contents
+                )
                 _cleansed = self._check_constructor_emit(
                     path, _version, file_contents
                 )
-                if version_number >= 11:
-                    self.check_solc_error_json(_cleansed, path, _version)
-                else:
-                    self.check_solc_error_legacy(_cleansed, path, _version)
+                self._solc_check(path, _version, version_number, _cleansed)
 
             if shared_processed_files and lock:
                 with lock:
@@ -620,12 +698,18 @@ class Cleaner:
             logger.exception(f"Error processing file: {path}\n")
             logger.exception(f"{str(e)}\n")
 
+    def _solc_check(self, path, _version, version_number, _cleansed):
+        if version_number >= 11:
+            return self.check_solc_error_json(_cleansed, path, _version)
+        else:
+            return self.check_solc_error_legacy(_cleansed, path, _version)
+
     def _check_constructor_emit(self, path, _version, file_contents):
         version_number = int(_version.split(".")[2])
 
         if version_number < 22:
             # Get the contract names
-            contract_names = self.get_contract_names(file_contents)
+            contract_names = self.get_contract_names(file_contents, _version)
 
             # Replace constructors for each contract
             file_contents = self.replace_constructors(
@@ -633,7 +717,7 @@ class Cleaner:
             )
         else:
             # Get the contract names
-            contract_names = self.get_contract_names(file_contents)
+            contract_names = self.get_contract_names(file_contents, _version)
 
             # Replace constructors for each contract
             file_contents = self.replace_old_to_new_constructors(

@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from logging import Logger
 import os
 import platform
@@ -58,7 +59,7 @@ def match_search_pragma(pragma_pattern, content):
     if match:
         # Extract version number and clean the string
         solidity_version = re.sub(r"[^0-9.]", "", match.group(1)).strip()
-        if "^" in match.group(1):
+        if "^" in match.group(1) or ">" in match.group(1):
             version_major = solidity_version.split(".")[1]
 
             if int(version_major) == 4:
@@ -161,13 +162,20 @@ def get_solc_binary(
     return solc_binary_path
 
 
+class DockerSolcCompileType:
+    standard_json = "--standard-json"
+    abi_compact_json = "--ast-compact-json"
+
+
 def compile_with_docker(
-    version: str, file_contents: str
+    version: str,
+    file_contents: str,
+    docker_solc_compile_type: str = DockerSolcCompileType.standard_json,
 ) -> Tuple[str, str, str]:
     run_subprocess(
         f"docker pull --platform linux/amd64 ethereum/solc:{version}"
     )
     return run_subprocess(
-        f"docker run --platform linux/amd64 --rm -i -a stdin -a stdout -a stderr ethereum/solc:{version} --standard-json",
+        f"docker run --platform linux/amd64 --rm -i -a stdin -a stdout -a stderr ethereum/solc:{version} {docker_solc_compile_type}",
         input_data=file_contents,
     )
