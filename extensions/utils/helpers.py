@@ -6,6 +6,7 @@ import platform
 import re
 import subprocess
 from typing import Tuple
+import uuid
 
 import requests
 
@@ -174,10 +175,19 @@ def compile_with_docker(
     file_contents: str,
     docker_solc_compile_type: str = DockerSolcCompileType.standard_json,
 ) -> Tuple[str, str, str]:
+    # Generate a unique container name for each run
+    container_name = f"solc-{uuid.uuid4()}"
+
     run_subprocess(
         f"docker pull --platform linux/amd64 ethereum/solc:{version}"
     )
-    return run_subprocess(
-        f"docker run --platform linux/amd64 --rm -i -a stdin -a stdout -a stderr ethereum/solc:{version} {docker_solc_compile_type}",
+
+    stdout, stderr, return_code = run_subprocess(
+        f"docker run --platform linux/amd64 --name {container_name} -i -a stdin -a stdout -a stderr ethereum/solc:{version} {docker_solc_compile_type}",
         input_data=file_contents,
     )
+
+    # Remove the container after the process is complete
+    run_subprocess(f"docker rm {container_name}")
+
+    return stdout, stderr, return_code
