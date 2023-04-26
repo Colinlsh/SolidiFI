@@ -19,7 +19,7 @@ def setup_logging():
 @pytest.mark.parametrize("directory", ["test/files/contracts-dataset/Clean"])
 def test_check_concurrently(directory):
     cleaner = Cleaner()
-    cleaner.check_with_docker = False
+    # cleaner.check_with_docker = False
     cleaner.clean_concurrently(directory, clean_type=CleanType.all)
 
 
@@ -61,9 +61,9 @@ def test_clean_list(files):
         "test/files/contracts-dataset/Clean/3926.sol",
         "test/files/contracts-dataset/Clean/2594.sol",
         "test/files/contracts-dataset/Clean/4164.sol",
-        "test/files/contracts-dataset/Clean/2536.sol",
-        "test/files/contracts-dataset/Clean/2889.sol",
-        "test/files/contracts-dataset/Clean/3911.sol",
+        "test/files/contracts-dataset/Clean/2270.sol",
+        "test/files/contracts-dataset/Clean/3280.sol",
+        "test/files/contracts-dataset/Clean/707.sol",
     ],
 )
 def test_clean_list_solc(files):
@@ -82,11 +82,22 @@ def test_clean_list_no_pragma(files):
 
 
 @pytest.mark.parametrize(
-    "files", ["test/files/contracts-dataset/Clean/3438.sol"]
+    "files",
+    [
+        "test/files/contracts-dataset/Clean/2818.sol",
+        "test/files/contracts-dataset/Clean/172.sol",
+        "test/files/contracts-dataset/Clean/2301.sol",
+        "test/files/contracts-dataset/Clean/984.sol",
+        "test/files/contracts-dataset/Clean/707.sol",
+        "test/files/contracts-dataset/Clean/2839.sol",
+        "test/files/contracts-dataset/Clean/3209.sol",
+        "test/files/contracts-dataset/Clean/3722.sol",
+        "test/files/contracts-dataset/Clean/2825.sol",
+    ],
 )
 def test_clean_all(files):
     cleaner = Cleaner()
-    cleaner.check_with_docker = False
+    # cleaner.check_with_docker = False
     cleaner.clean(files, 0, clean_type=CleanType.all)
 
 

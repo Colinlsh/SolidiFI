@@ -64,6 +64,8 @@ def match_search_pragma(pragma_pattern, content):
 
             if int(version_major) == 4:
                 solidity_version = "0.4.26"
+        elif "0.4.15" in match.group(1):
+            solidity_version = "0.4.16"
 
     return solidity_version
 

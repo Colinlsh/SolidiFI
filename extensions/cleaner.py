@@ -273,15 +273,37 @@ class Cleaner:
 
         return bool(match)
 
+    def check_overriding_payable_error(
+        self, file_contents: str, error_msg: str
+    ):
+        error_msg = (
+            error_msg.split("Overriden function is here:")[1]
+            .strip()
+            .split("\n")[0]
+            .strip(";")
+            .split("returns")[0]
+            .strip()
+            .split()
+        )
+
+        function_name = error_msg[1]
+
+        complete_function_headers = regex.findall(
+            rf"(function {function_name}\([^{{]+)", file_contents
+        )
+
+        for complete_function_header in complete_function_headers:
+            if "payable" not in complete_function_header[0]:
+                new_function_header = complete_function_header[0].replace(
+                    ")", ") payable", 1
+                )
+                updated_file_contents = file_contents.replace(
+                    complete_function_header[0], new_function_header, 1
+                )
+                return updated_file_contents
+        return None
+
     def check_dot_value_error(self, file_contents: str, error_msg: str):
-        # line_regex = (
-        #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
-        # )
-        # old and working pattern
-        # line_regex = (
-        #     r"\s*(return\s*)?(if\s*\()?\s*(\w+\.\w+\.value\([^)]*\)\([^)]*\))"
-        # )
-        # line_regex = r"\s*(return\s*|if\s*\()?\s*(\w+\.\w+\.value\((?:[^()]*|\([^)]*\))\)\([^)]*\))"
         line = None
         error_msg = error_msg.split("\n")[1].strip().replace(";", "")
 
@@ -298,34 +320,40 @@ class Cleaner:
             line = line_match.group(1)
         else:
             line_match = re.search(
-                r"\w+\.\w+\.value\([^)]*\)\([^)]*\)",
+                r"(\w+\.\w+\.value)\([^)]*\)(\([^)]*\))",
                 error_msg,
             )
-            line = line_match.group(0)
+            if not line_match:
+                line = error_msg
+            else:
+                line = line_match.group(0)
 
         if not line:
             raise Exception(
                 "Problematic dot value error line not found in the error message."
             )
 
-        function_call_regex = r"(.+?)\.(.+?)\.value"
-        function_call_match = regex.search(function_call_regex, line)
+        function_ = line.split("value(")
+        contract_name = function_[0].split(".")[0]
+        function_name = function_[0].split(".")[1]
 
-        if not function_call_match:
-            logger.error("Function call not found in the problematic line.")
-            return None
+        _f = function_[1].split(")(")
+        function_params = _f[1][0 : _f[1].rfind(")")].strip()
 
-        contract_name = function_call_match.group(1)
-        function_name = function_call_match.group(2)
+        # function_call_match = re.search(
+        #     r"(\w+)\.(\w+)\.value\([^)]*\)\(([^)]*)\)",
+        #     line,
+        # )
 
-        function_args_regex = r"\(([^)]*)\)"
-        function_args_match = regex.findall(function_args_regex, line)
+        # if not function_call_match:
+        #     logger.error("Function call not found in the problematic line.")
+        #     return None
 
-        if not function_args_match:
-            logger.error("Arguments not found in the problematic line.")
-            return None
+        # contract_name = function_call_match.group(1)
+        # function_name = function_call_match.group(2)
+        # function_params = function_call_match.group(3)
 
-        num_args = self.count_arguments(function_args_match[-1])
+        num_args = self.count_arguments(function_params)
 
         function_header_regex = rf"function {function_name}\("
         complete_function_headers = regex.findall(
@@ -334,7 +362,7 @@ class Cleaner:
 
         for complete_function_header in complete_function_headers:
             function_args_match = regex.search(
-                function_args_regex, complete_function_header
+                r"\(([^)]*)\)", complete_function_header
             )
 
             if not function_args_match:
@@ -348,15 +376,14 @@ class Cleaner:
                 and "payable" not in complete_function_header
             ):
                 new_function_header = complete_function_header.replace(
-                    ")", ") payable", 1
+                    ")", ") payable ", 1
                 )
                 updated_file_contents = file_contents.replace(
                     complete_function_header, new_function_header, 1
                 )
                 return updated_file_contents
 
-        logger.error("Function header not found in the contract code.")
-        return None
+        raise Exception("Function header not found in the contract code.")
 
     def check_parse_error(self, file_contents: str, error_msg: str) -> str:
         # The pattern will match the modifier declaration and the underscore
@@ -403,7 +430,7 @@ class Cleaner:
 
                         if header_num_args == num_args:
                             new_constructor_header = (
-                                rf"constructor({header_args}) payable"
+                                rf"constructor({header_args}) payable "
                             )
                             constructor_header = rf"constructor({header_args})"
                             updated_contract_code = re.sub(
@@ -436,8 +463,12 @@ class Cleaner:
         # Regex pattern to match the specific TypeError
         pattern_regex = r"\(new (\w+)\)\.value"
         pattern_match = re.search(pattern_regex, error_msg)
-
         return bool(pattern_match)
+
+    def is_function_override_payable_error(self, error_msg):
+        pattern = 'TypeError: Overriding function changes state mutability from "payable" to "nonpayable"'
+
+        return pattern in error_msg
 
     def add_param_description(
         self, contract_code: str, error_message: str
@@ -509,10 +540,9 @@ class Cleaner:
             try:
                 compilation_result = json.loads(stdout)
             except json.JSONDecodeError:
-                logger.error(
+                raise Exception(
                     f"Error parsing solc output for {file_path}: {stdout}"
                 )
-                return
 
             # Check for errors
             if "errors" in compilation_result:
@@ -549,11 +579,17 @@ class Cleaner:
                             updated = self.add_param_description(
                                 file_contents, formatted_message
                             )
+                        elif self.is_function_override_payable_error(
+                            formatted_message
+                        ):
+                            updated = self.check_overriding_payable_error(
+                                file_contents, formatted_message
+                            )
                         else:
                             line_number = formatted_message.split(".sol:")[
                                 1
                             ].split(":")[0]
-                            logger.error(
+                            raise Exception(
                                 f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                             )
 
