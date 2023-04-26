@@ -481,20 +481,21 @@ class Cleaner:
 
         param = match.group(1)
         # Create a regex pattern to find the @param line
-        param_pattern = rf"@param {param}"
+        param_pattern = rf"(@param {param}\s*)$"
 
-        # Find all the occurrences of the pattern in the contract code
-        matches = [match for match in re.finditer(param_pattern, contract_code)]
+        # Define a function to add the description if not already present
+        def replacement_function(match):
+            if not re.search(rf"@param {param}\s+\S+", match.group(0)):
+                return f"@param {param} {param}\n"
+            return match.group(0)
 
-        # Iterate through the matches and update each occurrence with a simple description
-        updated_contract_code = contract_code
-        for match in matches:
-            updated_line = f"@param {param} {param}\n"
-            updated_contract_code = (
-                updated_contract_code[: match.start()]
-                + updated_line
-                + updated_contract_code[match.end() :]
-            )
+        # Update the contract code by replacing the matched lines
+        updated_contract_code = re.sub(
+            param_pattern,
+            replacement_function,
+            contract_code,
+            flags=re.MULTILINE,
+        )
 
         return updated_contract_code
 
