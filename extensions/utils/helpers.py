@@ -191,3 +191,34 @@ def compile_with_docker(
     run_subprocess(f"docker rm {container_name}")
 
     return stdout, stderr, return_code
+
+
+def find_closing_brace(code: str, start: int) -> int:
+    open_braces = 1
+    position = start
+    while open_braces > 0 and position < len(code):
+        if code[position] == "{":
+            open_braces += 1
+        elif code[position] == "}":
+            open_braces -= 1
+        position += 1
+    return position
+
+
+def find_function_start_end(file_content: str):
+    pattern = re.compile(
+        r"(function payOwners\(\) private canPayOwners {.*?})", re.DOTALL
+    )
+
+    function_positions = [
+        match.start() for match in pattern.finditer(file_content)
+    ]
+    function_positions.append(len(file_content))
+
+    for i, position in enumerate(function_positions[:-1]):
+        if position < function_positions[i + 1]:
+            function_start = position
+            function_end = function_positions[i + 1]
+            break
+
+    return function_start, function_end

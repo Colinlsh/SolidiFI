@@ -12,15 +12,12 @@ import regex
 from .logger import LoggerSetup
 
 from .utils.helpers import (
-    DockerSolcCompileType,
     change_solc_version,
     check_solidity_file_version,
-    chunks,
     compile_with_docker,
     fix_pragma,
     is_pragma_invalid,
     run_subprocess,
-    set_path_context,
 )
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
@@ -61,25 +58,6 @@ class Cleaner:
     def get_contract_names(
         self, file_contents: str, version: str = ""
     ) -> list[str]:
-        # # Parse the Solidity code
-        # stdout, stderr, returncode = compile_with_docker(
-        #     version, file_contents, DockerSolcCompileType.abi_compact_json
-        # )
-
-        # if returncode == 0:
-        #     # Extract JSON data from the compiler output
-        #     json_data = stdout.split("======= <stdin> =======")[1].strip()
-
-        #     # Load JSON data into a Python dictionary
-        #     compilation_output = json.loads(json_data)
-        #     contract_names = [
-        #         _node["name"]
-        #         for _node in compilation_output["nodes"]
-        #         if _node["nodeType"] == "ContractDefinition"
-        #     ]
-
-        #     return contract_names
-
         source_unit = parser.parse(file_contents)
         return [
             node["name"]
@@ -303,8 +281,104 @@ class Cleaner:
                 return updated_file_contents
         return None
 
+    def extract_function_block(self, file_contents: str, start_index):
+        stack = []
+        start = -1
+        end = -1
+
+        _function_start = file_contents[start_index:]
+
+        brace_indices = self.get_matching_brace_indices(_function_start)
+
+        for open_index, close_index in brace_indices:
+            if open_index == start_index:
+                end_index = close_index
+                break
+
+        _function_block = _function_start[start_index : end_index + 1]
+
+        return _function_block
+
+    def check_undeclared_identifier(self, file_content: str, error_msg: str):
+        # Split the contract into lines
+        lines = file_content.split("\n")
+
+        # Extract the line number from the error message
+        # The error message format is assumed to be 'filename:linenumber:column: ErrorMessage'
+        line_number = (
+            int(error_msg.split(":")[1]) - 1
+        )  # Subtract 1 because list indices start at 0
+
+        # Comment out the line
+        lines[line_number] = "// " + lines[line_number]
+
+        # Join the lines back into a single string
+        new_file_content = "\n".join(lines)
+
+        return new_file_content
+
+    def check_division_by_zero_error(self, file_content: str, error_msg: str):
+        # Find the start of the function declaration
+        function_start = file_content.find(
+            "function payOwners() private canPayOwners"
+        )
+
+        # If the function name is not found, return error
+        if function_start == -1:
+            raise Exception(f"Function not found in the code. {error_msg}")
+
+        # Find the opening bracket of the function block
+        opening_bracket = file_content.find("{", function_start)
+
+        if opening_bracket == -1:
+            raise Exception(
+                f"Opening bracket not found in the function. {error_msg}"
+            )
+
+        # Initialize bracket count
+        bracket_count = 1
+
+        # Initialize position of the closing bracket
+        closing_bracket = opening_bracket
+
+        # Iterate over the code from the opening bracket
+        for i in range(opening_bracket + 1, len(file_content)):
+            if file_content[i] == "{":
+                bracket_count += 1
+            elif file_content[i] == "}":
+                bracket_count -= 1
+
+            # If bracket count is 0, we found the closing bracket of the function
+            if bracket_count == 0:
+                closing_bracket = self.check_closing_bracket(file_content, i)
+                break
+
+        # _function_block = file_content[function_start : closing_bracket + 1]
+
+        return self.comment_out_function(
+            file_content, function_start, closing_bracket + 1
+        )
+
+    def check_closing_bracket(self, file_content, index):
+        if file_content[index] != "}":
+            return self.check_closing_bracket(file_content, index + 1)
+        else:
+            return index
+
+    def comment_out_function(self, file_content: str, start: int, end: int):
+        # Add comment delimiters around the function code
+        commented_function = "/*" + file_content[start : end + 1] + "*/"
+
+        # Replace the function code with the commented version
+        new_file_content = (
+            file_content[:start] + commented_function + file_content[end + 1 :]
+        )
+
+        return new_file_content
+
     def check_dot_value_error(self, file_contents: str, error_msg: str):
         line = None
+        ori_error = error_msg
         error_msg = error_msg.split("\n")[1].strip().replace(";", "")
 
         if self.is_if_statement(error_msg):
@@ -330,15 +404,15 @@ class Cleaner:
 
         if not line:
             raise Exception(
-                "Problematic dot value error line not found in the error message."
+                f"Problematic dot value error line not found in the error message. {error_msg}"
             )
 
         function_ = line.split("value(")
         contract_name = function_[0].split(".")[0]
         function_name = function_[0].split(".")[1]
 
-        _f = function_[1].split(")(")
-        function_params = _f[1][0 : _f[1].rfind(")")].strip()
+        # _f = function_[1].split(")(")
+        # function_params = _f[1][0 : _f[1].rfind(")")].strip()
 
         # function_call_match = re.search(
         #     r"(\w+)\.(\w+)\.value\([^)]*\)\(([^)]*)\)",
@@ -353,7 +427,7 @@ class Cleaner:
         # function_name = function_call_match.group(2)
         # function_params = function_call_match.group(3)
 
-        num_args = self.count_arguments(function_params)
+        # num_args = self.count_arguments(function_params)
 
         function_header_regex = rf"function {function_name}\("
         complete_function_headers = regex.findall(
@@ -361,20 +435,7 @@ class Cleaner:
         )
 
         for complete_function_header in complete_function_headers:
-            function_args_match = regex.search(
-                r"\(([^)]*)\)", complete_function_header
-            )
-
-            if not function_args_match:
-                continue
-
-            header_args = function_args_match.group(1)
-            header_num_args = self.count_arguments(header_args)
-
-            if (
-                header_num_args == num_args
-                and "payable" not in complete_function_header
-            ):
+            if "payable" not in complete_function_header:
                 new_function_header = complete_function_header.replace(
                     ")", ") payable ", 1
                 )
@@ -383,7 +444,9 @@ class Cleaner:
                 )
                 return updated_file_contents
 
-        raise Exception("Function header not found in the contract code.")
+        raise Exception(
+            f"Function header not found in the contract code. {error_msg}"
+        )
 
     def check_parse_error(self, file_contents: str, error_msg: str) -> str:
         # The pattern will match the modifier declaration and the underscore
@@ -470,6 +533,11 @@ class Cleaner:
 
         return pattern in error_msg
 
+    def is_division_by_zero(self, error_msg):
+        pattern = "TypeError: Division by zero."
+
+        return pattern in error_msg
+
     def add_param_description(
         self, contract_code: str, error_message: str
     ) -> str:
@@ -501,7 +569,7 @@ class Cleaner:
 
     def check_solc_error_json(
         self,
-        file_contents: str,
+        file_content: str,
         file_path: str,
         version: str,
         solc_bin_path: str = None,
@@ -513,7 +581,7 @@ class Cleaner:
 
         standard_json_input = {
             "language": "Solidity",
-            "sources": {f"{tail}": {"content": file_contents}},
+            "sources": {f"{tail}": {"content": file_content}},
             "settings": {
                 "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
             },
@@ -550,10 +618,10 @@ class Cleaner:
                 errors = compilation_result["errors"]
                 for error in errors:
                     if error["severity"] == "error":
-                        has_error = True
                         formatted_message: str = error["formattedMessage"]
                         message = error["message"]
                         line_number = "no line number"
+                        has_error = True
 
                         if self.is_payable_error(formatted_message):
                             line_number = formatted_message.split(".sol:")[
@@ -563,28 +631,36 @@ class Cleaner:
                                 formatted_message
                             ):
                                 updated = self.check_constructor_error(
-                                    file_contents, formatted_message
+                                    file_content, formatted_message
                                 )
                             else:
                                 updated = self.check_dot_value_error(
-                                    file_contents, formatted_message
+                                    file_content, formatted_message
                                 )
                         elif self.is_semi_colon_parenthesis(formatted_message):
                             line_number = formatted_message.split(".sol:")[
                                 1
                             ].split(":")[0]
                             updated = self.check_parse_error(
-                                file_contents, formatted_message
+                                file_content, formatted_message
                             )
                         elif "DocstringParsingError" == error["type"]:
                             updated = self.add_param_description(
-                                file_contents, formatted_message
+                                file_content, formatted_message
                             )
                         elif self.is_function_override_payable_error(
                             formatted_message
                         ):
                             updated = self.check_overriding_payable_error(
-                                file_contents, formatted_message
+                                file_content, formatted_message
+                            )
+                        elif self.is_division_by_zero(formatted_message):
+                            updated = self.check_division_by_zero_error(
+                                file_content, formatted_message
+                            )
+                        elif "Undeclared identifier" in message:
+                            updated = self.check_undeclared_identifier(
+                                file_content, formatted_message
                             )
                         else:
                             line_number = formatted_message.split(".sol:")[
@@ -605,7 +681,7 @@ class Cleaner:
                                 with open(file_path, "w") as f:
                                     f.write(updated)
 
-            return has_error, file_contents if not updated else updated
+            return has_error, file_content if not updated else updated
 
         elif stderr:
             logger.error(stderr)
@@ -837,6 +913,13 @@ class Cleaner:
                         chunks,
                     ):
                         pass
+
+                self.progress_updater.print_progress_bar(
+                    shared_processed_files.value,
+                    total_files,
+                    prefix="All done! exporting...",
+                    suffix="All done! exporting...",
+                )
         except Exception as e:
             logger.exception(f"{str(e)}\n")
 

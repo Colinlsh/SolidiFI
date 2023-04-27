@@ -11,6 +11,7 @@ class ProgressUpdater:
         length=50,
         fill="█",
         print_end="\r",
+        is_done=False,
     ):
         """
         Call in a loop to create a terminal progress bar.
@@ -26,10 +27,16 @@ class ProgressUpdater:
         filled_length = int(length * iteration // total)
         bar = fill * filled_length + "-" * (length - filled_length)
 
-        print(
-            f"\r{prefix} |{bar}| {percent}% {suffix} | {iteration}/{total}",
-            end=print_end,
-        )
+        if not is_done:
+            print(
+                f"\r{prefix} |{bar}| {percent}% {suffix} | {iteration}/{total}",
+                end=print_end,
+            )
+        else:
+            print(
+                f"\rCompleted: {iteration}/{total} YAY!!",
+                end=print_end,
+            )
 
         # Print a new line when complete
         if iteration == total:
