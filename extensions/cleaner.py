@@ -251,55 +251,46 @@ class Cleaner:
 
         return bool(match)
 
-    def check_overriding_payable_error(
+    def clean_overriding_payable_error(
         self, file_contents: str, error_msg: str
     ):
-        error_msg = (
+        function_name = (
             error_msg.split("Overriden function is here:")[1]
             .strip()
             .split("\n")[0]
             .strip(";")
-            .split("returns")[0]
+            .split("external")[0]
+            .split("payable")[0]
             .strip()
-            .split()
+            .split("function")[1]
+            .split("(")[0]
+            .strip()
         )
 
-        function_name = error_msg[1]
-
-        complete_function_headers = regex.findall(
+        complete_function_headers = re.findall(
             rf"(function {function_name}\([^{{]+)", file_contents
         )
 
         for complete_function_header in complete_function_headers:
-            if "payable" not in complete_function_header[0]:
-                new_function_header = complete_function_header[0].replace(
-                    ")", ") payable", 1
-                )
+            _header: str = (
+                complete_function_header[0]
+                if len(complete_function_header) > 1
+                and complete_function_header[1] == ""
+                else complete_function_header
+            )
+            if (
+                "payable" not in _header
+                and "internal" not in complete_function_header
+            ):
+                new_function_header = _header.replace(")", ") payable", 1)
                 updated_file_contents = file_contents.replace(
-                    complete_function_header[0], new_function_header, 1
+                    _header, new_function_header, 1
                 )
                 return updated_file_contents
-        return None
 
-    def extract_function_block(self, file_contents: str, start_index):
-        stack = []
-        start = -1
-        end = -1
+        raise Exception(f"No matching function header for {error_msg}")
 
-        _function_start = file_contents[start_index:]
-
-        brace_indices = self.get_matching_brace_indices(_function_start)
-
-        for open_index, close_index in brace_indices:
-            if open_index == start_index:
-                end_index = close_index
-                break
-
-        _function_block = _function_start[start_index : end_index + 1]
-
-        return _function_block
-
-    def check_undeclared_identifier(self, file_content: str, error_msg: str):
+    def clean_undeclared_identifier(self, file_content: str, error_msg: str):
         # Split the contract into lines
         lines = file_content.split("\n")
 
@@ -317,7 +308,7 @@ class Cleaner:
 
         return new_file_content
 
-    def check_division_by_zero_error(self, file_content: str, error_msg: str):
+    def clean_division_by_zero_error(self, file_content: str, error_msg: str):
         # Find the start of the function declaration
         function_start = file_content.find(
             "function payOwners() private canPayOwners"
@@ -376,7 +367,7 @@ class Cleaner:
 
         return new_file_content
 
-    def check_dot_value_error(self, file_contents: str, error_msg: str):
+    def clean_dot_value_error(self, file_contents: str, error_msg: str):
         line = None
         ori_error = error_msg
         error_msg = error_msg.split("\n")[1].strip().replace(";", "")
@@ -408,11 +399,20 @@ class Cleaner:
             )
 
         function_ = line.split("value(")
-        contract_name = function_[0].split(".")[0]
-        function_name = function_[0].split(".")[1]
+        _split_dot = function_[0].split(".")
+        # Filter out empty strings
+        _split_dot = [x for x in _split_dot if x]
 
-        # _f = function_[1].split(")(")
-        # function_params = _f[1][0 : _f[1].rfind(")")].strip()
+        if len(_split_dot) > 2:
+            contract_name = _split_dot[0]
+            function_name = _split_dot[-1]
+
+        else:
+            contract_name = function_[0].split(".")[0]
+            function_name = function_[0].split(".")[1]
+
+        _f = function_[1].split(")(")
+        function_params = _f[1][0 : _f[1].rfind(")")].strip()
 
         # function_call_match = re.search(
         #     r"(\w+)\.(\w+)\.value\([^)]*\)\(([^)]*)\)",
@@ -427,7 +427,7 @@ class Cleaner:
         # function_name = function_call_match.group(2)
         # function_params = function_call_match.group(3)
 
-        # num_args = self.count_arguments(function_params)
+        num_args = self.count_arguments(function_params)
 
         function_header_regex = rf"function {function_name}\("
         complete_function_headers = regex.findall(
@@ -435,12 +435,31 @@ class Cleaner:
         )
 
         for complete_function_header in complete_function_headers:
-            if "payable" not in complete_function_header:
-                new_function_header = complete_function_header.replace(
-                    ")", ") payable ", 1
-                )
+            _header: str = (
+                complete_function_header[0]
+                if len(complete_function_header) > 1
+                and complete_function_header[1] == ""
+                else complete_function_header
+            )
+
+            function_args_match = regex.search(
+                r"\(([^)]*)\)", complete_function_header
+            )
+
+            if not function_args_match:
+                continue
+
+            header_args = function_args_match.group(1)
+            header_num_args = self.count_arguments(header_args)
+
+            if (
+                header_num_args == num_args
+                and "payable" not in complete_function_header
+                and "internal" not in complete_function_header
+            ):
+                new_function_header = _header.replace(")", ") payable ", 1)
                 updated_file_contents = file_contents.replace(
-                    complete_function_header, new_function_header, 1
+                    _header, new_function_header, 1
                 )
                 return updated_file_contents
 
@@ -448,7 +467,7 @@ class Cleaner:
             f"Function header not found in the contract code. {error_msg}"
         )
 
-    def check_parse_error(self, file_contents: str, error_msg: str) -> str:
+    def clean_parse_error(self, file_contents: str, error_msg: str) -> str:
         # The pattern will match the modifier declaration and the underscore
         pattern = r"(modifier\s+\w+\s+\{[\s\S]*?)(\_)([\s\S]*?\})"
 
@@ -461,7 +480,7 @@ class Cleaner:
 
         return corrected_code
 
-    def check_constructor_error(self, file_contents: str, error_msg: str):
+    def clean_constructor_error(self, file_contents: str, error_msg: str):
         # Extract the problematic line from the error message
         line_regex = r"\n\s*(.*);\n\s*\^"
         line_match = re.search(line_regex, error_msg)
@@ -538,7 +557,7 @@ class Cleaner:
 
         return pattern in error_msg
 
-    def add_param_description(
+    def clean_add_param_description(
         self, contract_code: str, error_message: str
     ) -> str:
         # Create a regex pattern to match the parameter name in the error message
@@ -616,70 +635,72 @@ class Cleaner:
             # Check for errors
             if "errors" in compilation_result:
                 errors = compilation_result["errors"]
-                for error in errors:
-                    if error["severity"] == "error":
-                        formatted_message: str = error["formattedMessage"]
-                        message = error["message"]
-                        line_number = "no line number"
-                        has_error = True
+                _errors = [e for e in errors if e["severity"] == "error"]
 
-                        if self.is_payable_error(formatted_message):
-                            line_number = formatted_message.split(".sol:")[
-                                1
-                            ].split(":")[0]
-                            if self.is_payable_constructor_error(
-                                formatted_message
-                            ):
-                                updated = self.check_constructor_error(
-                                    file_content, formatted_message
-                                )
-                            else:
-                                updated = self.check_dot_value_error(
-                                    file_content, formatted_message
-                                )
-                        elif self.is_semi_colon_parenthesis(formatted_message):
-                            line_number = formatted_message.split(".sol:")[
-                                1
-                            ].split(":")[0]
-                            updated = self.check_parse_error(
-                                file_content, formatted_message
-                            )
-                        elif "DocstringParsingError" == error["type"]:
-                            updated = self.add_param_description(
-                                file_content, formatted_message
-                            )
-                        elif self.is_function_override_payable_error(
-                            formatted_message
-                        ):
-                            updated = self.check_overriding_payable_error(
-                                file_content, formatted_message
-                            )
-                        elif self.is_division_by_zero(formatted_message):
-                            updated = self.check_division_by_zero_error(
-                                file_content, formatted_message
-                            )
-                        elif "Undeclared identifier" in message:
-                            updated = self.check_undeclared_identifier(
+                if len(_errors) == 0:
+                    return has_error, file_content
+
+                for error in _errors:
+                    formatted_message: str = error["formattedMessage"]
+                    message = error["message"]
+                    line_number = "no line number"
+                    has_error = True
+
+                    if self.is_payable_error(formatted_message):
+                        line_number = formatted_message.split(".sol:")[1].split(
+                            ":"
+                        )[0]
+                        if self.is_payable_constructor_error(formatted_message):
+                            updated = self.clean_constructor_error(
                                 file_content, formatted_message
                             )
                         else:
-                            line_number = formatted_message.split(".sol:")[
-                                1
-                            ].split(":")[0]
-                            raise Exception(
-                                f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
+                            updated = self.clean_dot_value_error(
+                                file_content, formatted_message
                             )
+                    elif self.is_semi_colon_parenthesis(formatted_message):
+                        line_number = formatted_message.split(".sol:")[1].split(
+                            ":"
+                        )[0]
+                        updated = self.clean_parse_error(
+                            file_content, formatted_message
+                        )
+                    elif "DocstringParsingError" == error["type"]:
+                        updated = self.clean_add_param_description(
+                            file_content, formatted_message
+                        )
+                    elif self.is_function_override_payable_error(
+                        formatted_message
+                    ):
+                        updated = self.clean_overriding_payable_error(
+                            file_content, formatted_message
+                        )
+                    elif self.is_division_by_zero(formatted_message):
+                        updated = self.clean_division_by_zero_error(
+                            file_content, formatted_message
+                        )
+                    elif "Undeclared identifier" in message:
+                        updated = self.clean_undeclared_identifier(
+                            file_content, formatted_message
+                        )
+                    else:
+                        line_number = formatted_message.split(".sol:")[1].split(
+                            ":"
+                        )[0]
+                        raise Exception(
+                            f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
+                        )
 
-                        if updated:
-                            (
-                                _has_error,
-                                _,
-                            ) = self.check_solc_error_json(
-                                updated, file_path, version
-                            )
-                            if not _has_error:
-                                with open(file_path, "w") as f:
-                                    f.write(updated)
+                    if updated:
+                        (
+                            _has_error,
+                            _,
+                        ) = self.check_solc_error_json(
+                            updated, file_path, version
+                        )
+                        if not _has_error:
+                            with open(file_path, "w") as f:
+                                f.write(updated)
 
             return has_error, file_content if not updated else updated
 
@@ -817,33 +838,36 @@ class Cleaner:
         else:
             return self.check_solc_error_legacy(_cleansed, path, _version)
 
-    def _check_constructor_emit(self, path, _version, file_contents):
+    def _check_constructor_emit(self, path, _version, file_contents: str):
         version_number = int(_version.split(".")[2])
+        updated = None
 
         if version_number < 22:
             # Get the contract names
             contract_names = self.get_contract_names(file_contents, _version)
 
             # Replace constructors for each contract
-            file_contents = self.replace_constructors(
-                file_contents, contract_names
-            )
+            updated = self.replace_constructors(file_contents, contract_names)
         else:
             # Get the contract names
             contract_names = self.get_contract_names(file_contents, _version)
 
             # Replace constructors for each contract
-            file_contents = self.replace_old_to_new_constructors(
+            updated = self.replace_old_to_new_constructors(
                 file_contents, contract_names
             )
 
         if version_number < 21:
-            file_contents = file_contents.replace("emit ", "")
+            updated = (
+                updated.replace("emit ", "")
+                if updated
+                else file_contents.replace("emit ", "")
+            )
 
         with open(path, "w") as f:
-            f.write(file_contents)
+            f.write(updated)
 
-        return file_contents
+        return updated
 
     def _clean_it(
         self,
