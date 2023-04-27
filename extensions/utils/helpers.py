@@ -65,8 +65,8 @@ def match_search_pragma(pragma_pattern, content):
 
             if int(version_major) == 4:
                 solidity_version = "0.4.26"
-        elif "0.4.15" in match.group(1):
-            solidity_version = "0.4.16"
+        # elif "0.4.15" in match.group(1):
+        #     solidity_version = "0.4.26"
 
     return solidity_version
 
@@ -94,7 +94,7 @@ def run_subprocess(
         Tuple[str, str, str]: stdout, stderr, exitcode
     """
     process = subprocess.Popen(
-        f"{command}",
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         stdin=subprocess.PIPE,
@@ -176,19 +176,20 @@ def compile_with_docker(
     docker_solc_compile_type: str = DockerSolcCompileType.standard_json,
 ) -> Tuple[str, str, str]:
     # Generate a unique container name for each run
-    container_name = f"solc-{uuid.uuid4()}"
+    container_name = f"solc-select-solc-{uuid.uuid4()}"
 
-    run_subprocess(
-        f"docker pull --platform linux/amd64 ethereum/solc:{version}"
+    # run_subprocess(
+    #     f"docker pull --platform linux/amd64 ethereum/solc:{version}"
+    # )
+
+    docker_run_command_2 = (
+        f"docker run --rm --name {container_name} -i -a stdin -a stdout -a stderr solc_select_solc"
+        f" /bin/bash -c 'solc-select use {version} && solc {docker_solc_compile_type}'"
     )
 
     stdout, stderr, return_code = run_subprocess(
-        f"docker run --platform linux/amd64 --name {container_name} -i -a stdin -a stdout -a stderr ethereum/solc:{version} {docker_solc_compile_type}",
-        input_data=file_contents,
+        docker_run_command_2, input_data=file_contents
     )
-
-    # Remove the container after the process is complete
-    run_subprocess(f"docker rm {container_name}")
 
     return stdout, stderr, return_code
 

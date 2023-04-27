@@ -1,0 +1,8 @@
+# Install python image
+FROM python:3.9.16
+
+# Install solc-select
+RUN pip install solc-select
+
+# Install default solc versions
+RUN solc-select install all

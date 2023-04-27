@@ -600,7 +600,7 @@ class Cleaner:
 
         standard_json_input = {
             "language": "Solidity",
-            "sources": {f"{tail}": {"content": file_content}},
+            "sources": {tail: {"content": file_content}},
             "settings": {
                 "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
             },
@@ -626,6 +626,10 @@ class Cleaner:
         # Parse the JSON output from solc
         if stdout:
             try:
+                pattern = f"Switched global version to {version}\n"
+                if pattern in stdout:
+                    stdout = stdout.split(pattern)[1].strip("\n")
+
                 compilation_result = json.loads(stdout)
             except json.JSONDecodeError:
                 raise Exception(
