@@ -22,7 +22,6 @@ from .utils.helpers import (
 )
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
-from slither import Slither
 
 logger = LoggerSetup.get_logger(__name__)
 
