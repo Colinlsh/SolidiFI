@@ -454,15 +454,7 @@ class Cleaner:
             )
             line = line_match.group(1)
         else:
-            # line_match = re.search(
-            #     r"(\w+\.\w+\.value)\([^)]*\)(\([^)]*\))",
-            #     error_msg,
-            # )
             line = error_msg
-            # if not line_match:
-            #     line = error_msg
-            # else:
-            #     line = line_match.group(0)
 
         if not line:
             raise Exception(
@@ -479,19 +471,6 @@ class Cleaner:
 
         _f = function_[1].split(")(")
         function_params = _f[1][0 : _f[1].rfind(")")].strip()
-
-        # function_call_match = re.search(
-        #     r"(\w+)\.(\w+)\.value\([^)]*\)\(([^)]*)\)",
-        #     line,
-        # )
-
-        # if not function_call_match:
-        #     logger.error("Function call not found in the problematic line.")
-        #     return None
-
-        # contract_name = function_call_match.group(1)
-        # function_name = function_call_match.group(2)
-        # function_params = function_call_match.group(3)
 
         num_args = self.count_arguments(function_params)
 
@@ -675,7 +654,7 @@ class Cleaner:
 
         head, tail = os.path.split(file_path)
 
-        if version.parse(solc_version) > version.parse("0.4.11"):
+        if version.parse(solc_version) >= version.parse("0.4.11"):
             stdout, stderr = self.check_solc_error_new(
                 file_content, solc_version, tail
             )
@@ -756,16 +735,16 @@ class Cleaner:
                             f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                         )
 
-                if updated:
-                    (
-                        _has_error,
-                        _updated,
-                    ) = self.check_solc_error_json(
-                        updated, file_path, solc_version
-                    )
-                    if not _has_error:
-                        updated = _updated
-                        has_error = _has_error
+                    if updated:
+                        (
+                            _has_error,
+                            _updated,
+                        ) = self.check_solc_error_json(
+                            updated, file_path, solc_version
+                        )
+                        if not _has_error:
+                            updated = _updated
+                            has_error = _has_error
 
             return has_error, updated if updated else file_content
 
