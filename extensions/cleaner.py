@@ -58,20 +58,20 @@ class Cleaner:
         return check_solidity_file_version(file_path), updated_content
 
     def get_contract_names(
-        self, file_contents: str, version: str = ""
+        self, file_path, file_contents: str, version: str = ""
     ) -> list[str]:
-        change_solc_version(version)
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".sol") as temp:
-            temp.write(file_contents.encode())
-            temp_filename = temp.name
+        # change_solc_version(version)
+        # # Create a temporary file
+        # with tempfile.NamedTemporaryFile(delete=False, suffix=".sol") as temp:
+        #     temp.write(file_contents.encode())
+        #     temp_filename = temp.name
 
-        try:
-            slither = Slither(temp_filename)
+        # try:
+        #     slither = Slither(temp_filename)
 
-            return [c.name for c in slither.contracts]
-        finally:
-            os.unlink(temp_filename)
+        #     return [c.name for c in slither.contracts]
+        # finally:
+        #     os.unlink(temp_filename)
 
         # source_unit = parser.parse(file_contents)
         # return [
@@ -79,6 +79,40 @@ class Cleaner:
         #     for node in source_unit["children"]
         #     if node["type"] == "ContractDefinition"
         # ]
+
+        head, tail = os.path.split(file_path)
+        input_json_str = {
+            "language": "Solidity",
+            "sources": {tail: {"content": file_contents}},
+            "settings": {
+                "outputSelection": {
+                    "*": {
+                        "": ["ast"],
+                    },
+                },
+            },
+        }
+
+        input_json_str = json.dumps(input_json_str)
+
+        stdout, stderr, exit_code = compile_with_docker(version, input_json_str)
+
+        pattern = f"Switched global version to {version}\n"
+
+        if stderr:
+            raise Exception(
+                f"get contract names compiling error {file_path}: {stderr}"
+            )
+        else:
+            result = stdout.split(pattern)[1].strip("\n")
+
+            compilation_result = json.loads(result)
+
+        return [
+            node["name"]
+            for node in compilation_result["sources"][tail]["ast"]["nodes"]
+            if node["nodeType"] == "ContractDefinition"
+        ]
 
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
         stack = []
@@ -884,13 +918,17 @@ class Cleaner:
 
         if version_number < 22:
             # Get the contract names
-            contract_names = self.get_contract_names(file_contents, _version)
+            contract_names = self.get_contract_names(
+                path, file_contents, _version
+            )
 
             # Replace constructors for each contract
             updated = self.replace_constructors(file_contents, contract_names)
         else:
             # Get the contract names
-            contract_names = self.get_contract_names(file_contents, _version)
+            contract_names = self.get_contract_names(
+                path, file_contents, _version
+            )
 
             # Replace constructors for each contract
             updated = self.replace_old_to_new_constructors(

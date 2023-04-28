@@ -172,7 +172,7 @@ class DockerSolcCompileType:
 
 def compile_with_docker(
     version: str,
-    file_contents: str,
+    input_json: str,
     docker_solc_compile_type: str = DockerSolcCompileType.standard_json,
 ) -> Tuple[str, str, str]:
     # Generate a unique container name for each run
@@ -182,13 +182,13 @@ def compile_with_docker(
     #     f"docker pull --platform linux/amd64 ethereum/solc:{version}"
     # )
 
-    docker_run_command_2 = (
+    docker_run_command = (
         f"docker run --rm --name {container_name} -i -a stdin -a stdout -a stderr solc_select_solc"
         f" /bin/bash -c 'solc-select use {version} && solc {docker_solc_compile_type}'"
     )
 
     stdout, stderr, return_code = run_subprocess(
-        docker_run_command_2, input_data=file_contents
+        docker_run_command, input_data=input_json
     )
 
     return stdout, stderr, return_code
