@@ -167,13 +167,13 @@ def get_solc_binary(
 
 class DockerSolcCompileType:
     standard_json = "--standard-json"
-    abi_compact_json = "--ast-compact-json"
+    ast_compact_json = "--ast-compact-json"
 
 
 def compile_with_docker(
-    version: str,
+    solc_version: str,
     input_json: str,
-    docker_solc_compile_type: str = DockerSolcCompileType.standard_json,
+    commands: str = DockerSolcCompileType.standard_json,
 ) -> Tuple[str, str, str]:
     # Generate a unique container name for each run
     container_name = f"solc-select-solc-{uuid.uuid4()}"
@@ -184,7 +184,7 @@ def compile_with_docker(
 
     docker_run_command = (
         f"docker run --rm --name {container_name} -i -a stdin -a stdout -a stderr solc_select_solc"
-        f" /bin/bash -c 'solc-select use {version} && solc {docker_solc_compile_type}'"
+        f" /bin/bash -c 'solc-select use {solc_version} && solc {commands}'"
     )
 
     stdout, stderr, return_code = run_subprocess(

@@ -37,3 +37,4 @@ test/predict/
 test/files/
 test/output/
 test/logs/
+test/tmp/

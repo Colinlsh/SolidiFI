@@ -6,7 +6,9 @@ from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
 import re
+import tempfile
 from typing import List, Tuple
+import uuid
 
 import regex
 from .logger import LoggerSetup
@@ -114,6 +116,14 @@ class Cleaner:
                 for node in source_unit["children"]
                 if node["type"] == "ContractDefinition"
             ]
+
+    def get_contract_names_legacy(self, file_contents: str) -> list[str]:
+        source_unit = parser.parse(file_contents)
+        return [
+            node["name"]
+            for node in source_unit["children"]
+            if node["type"] == "ContractDefinition"
+        ]
 
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
         stack = []
@@ -444,32 +454,28 @@ class Cleaner:
             )
             line = line_match.group(1)
         else:
-            line_match = re.search(
-                r"(\w+\.\w+\.value)\([^)]*\)(\([^)]*\))",
-                error_msg,
-            )
-            if not line_match:
-                line = error_msg
-            else:
-                line = line_match.group(0)
+            # line_match = re.search(
+            #     r"(\w+\.\w+\.value)\([^)]*\)(\([^)]*\))",
+            #     error_msg,
+            # )
+            line = error_msg
+            # if not line_match:
+            #     line = error_msg
+            # else:
+            #     line = line_match.group(0)
 
         if not line:
             raise Exception(
                 f"Problematic dot value error line not found in the error message. {error_msg}"
             )
 
-        function_ = line.split("value(")
+        function_ = line.replace("return", "").strip().split("value(")
         _split_dot = function_[0].split(".")
         # Filter out empty strings
         _split_dot = [x for x in _split_dot if x]
 
-        if len(_split_dot) > 2:
-            contract_name = _split_dot[0]
-            function_name = _split_dot[-1]
-
-        else:
-            contract_name = function_[0].split(".")[0]
-            function_name = function_[0].split(".")[1]
+        contract_name = _split_dot[0]
+        function_name = _split_dot[-1]
 
         _f = function_[1].split(")(")
         function_params = _f[1][0 : _f[1].rfind(")")].strip()
@@ -669,29 +675,13 @@ class Cleaner:
 
         head, tail = os.path.split(file_path)
 
-        standard_json_input = {
-            "language": "Solidity",
-            "sources": {tail: {"content": file_content}},
-            "settings": {
-                "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
-            },
-        }
-
-        standard_json_input_str = json.dumps(standard_json_input)
-
-        if self.check_with_docker:
-            stdout, stderr, exit_code = compile_with_docker(
-                solc_version, standard_json_input_str
+        if version.parse(solc_version) > version.parse("0.4.11"):
+            stdout, stderr = self.check_solc_error_new(
+                file_content, solc_version, tail
             )
         else:
-            command = f"solc --standard-json"
-
-            if solc_bin_path is not None:
-                command = command.replace("solc", solc_bin_path)
-
-            stdout, stderr, exit_code = run_subprocess(
-                f"{command}",
-                input_data=standard_json_input_str,
+            stdout, stderr = self.check_solc_error_legacy(
+                file_content, file_path, solc_version, tail
             )
 
         # Parse the JSON output from solc
@@ -782,68 +772,122 @@ class Cleaner:
         elif stderr:
             logger.error(stderr)
 
-    def check_solc_error_legacy(
-        self,
-        file_contents: str,
-        file_path: str,
-        version: str = None,
-        solc_bin_path: str = None,
+    def check_solc_error_new(
+        self, file_content: str, solc_version: str, tail: str
     ):
-        head, tail = os.path.split(file_path)
-        temp_file_path = os.path.join(head, f"{tail}")
+        standard_json_input = {
+            "language": "Solidity",
+            "sources": {tail: {"content": file_content}},
+            "settings": {
+                "outputSelection": {"*": {"*": ["abi", "evm.bytecode.object"]}}
+            },
+        }
 
-        # Create a temporary file with the contract content
-        with open(temp_file_path, "w") as temp_file:
-            temp_file.write(file_contents)
+        standard_json_input_str = json.dumps(standard_json_input)
 
         if self.check_with_docker:
             stdout, stderr, exit_code = compile_with_docker(
-                version, temp_file_path
+                solc_version, standard_json_input_str
             )
         else:
-            command = f"solc --combined-json abi,bin {temp_file_path}"
+            command = f"solc --standard-json"
 
-            if solc_bin_path is not None:
-                command = command.replace("solc", solc_bin_path)
+            stdout, stderr, exit_code = run_subprocess(
+                f"{command}",
+                input_data=standard_json_input_str,
+            )
+
+        return stdout, stderr
+
+    def check_solc_error_legacy(
+        self, file_contents: str, file_path: str, solc_version: str, tail: str
+    ):
+        head, tail = os.path.split(file_path)
+        temp_file_path = os.path.join(f"{head}/tmp", f"{tail}")
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".sol", delete=False
+        ) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(file_contents.encode())
+        # Create a temporary file with the contract content
+        # with open(temp_file_path, "w") as temp_file:
+        #     temp_file.write(file_contents)
+
+        # full_temp_path = os.path.abspath(temp_file_path)
+
+        if self.check_with_docker:
+            container_name = f"solc-select-solc-{uuid.uuid4()}"
+            docker_run_command = (
+                f"docker run --rm --name {container_name} -v {temp_file_path}:{temp_file_path} -i -a stdin -a stdout -a stderr solc_select_solc"
+                f" /bin/bash -c 'solc-select use {solc_version} && solc --combined-json abi,bin {temp_file_path}'"
+            )
+
+            stdout, stderr, exit_code = run_subprocess(
+                f"{docker_run_command}",
+            )
+
+            # stdout, stderr, exit_code = compile_with_docker(
+            #     solc_version, "", f"--combined-json abi,bin {full_temp_path}"
+            # )
+        else:
+            command = f"solc --combined-json abi,bin {temp_file_path}"
 
             # change_solc_version(version)
             stdout, stderr, exit_code = run_subprocess(
                 f"{command}",
             )
 
-            # Remove the temporary file
-            os.remove(temp_file_path)
+        # Remove the temporary file
+        os.remove(temp_file_path)
 
-        # Check for errors
-        if exit_code != 0:
-            error_lines = stderr.split("\n")
-            for error_line in error_lines:
-                if "Error:" in error_line:
-                    logger.error(f"Error found in {file_path}\n \t{error_line}")
+        return stdout, stderr
 
-        # Parse the JSON output from solc
-        else:
-            try:
-                compilation_result = json.loads(stdout)
-            except json.JSONDecodeError:
-                logger.error(
-                    f"Error parsing solc output for {file_path}: {stdout}"
-                )
-                return
+        # # Parse the JSON output from solc
+        # if stdout:
+        #     try:
+        #         pattern = f"Switched global version to {solc_version}\n"
+        #         if pattern in stdout:
+        #             stdout = stdout.split(pattern)[1].strip("\n")
 
-            # Check for errors
-            if "errors" in compilation_result:
-                errors = compilation_result["errors"]
-                for error in errors:
-                    if error["severity"] == "error":
-                        formatted_message: str = error["formattedMessage"]
-                        line_number = formatted_message.split(".sol:")[1].split(
-                            ":"
-                        )[0]
-                        message = error["message"]
-                        logger.error(
-                            f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
-                        )
+        #         compilation_result = json.loads(stdout)
+        #     except json.JSONDecodeError:
+        #         raise Exception(
+        #             f"Error parsing solc output for {file_path}: {stdout}"
+        #         )
+        # elif stderr:
+        #     logger.error(stderr)
+
+        # # Check for errors
+        # if exit_code != 0:
+        #     error_lines = stderr.split("\n")
+        #     for error_line in error_lines:
+        #         if "Error:" in error_line:
+        #             logger.error(f"Error found in {file_path}\n \t{error_line}")
+
+        # # Parse the JSON output from solc
+        # else:
+        #     try:
+        #         compilation_result = json.loads(stdout)
+        #     except json.JSONDecodeError:
+        #         logger.error(
+        #             f"Error parsing solc output for {file_path}: {stdout}"
+        #         )
+        #         return
+
+        #     # Check for errors
+        #     if "errors" in compilation_result:
+        #         errors = compilation_result["errors"]
+        #         for error in errors:
+        #             if error["severity"] == "error":
+        #                 formatted_message: str = error["formattedMessage"]
+        #                 line_number = formatted_message.split(".sol:")[1].split(
+        #                     ":"
+        #                 )[0]
+        #                 message = error["message"]
+        #                 logger.error(
+        #                     f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
+        # )
 
     def clean(
         self,
@@ -884,18 +928,18 @@ class Cleaner:
                     file_path, _version, file_content
                 )
             elif clean_type == CleanType.solc_error:
-                _, _cleansed = self._solc_check(
-                    file_path, _version, file_content
+                _, _cleansed = self.check_solc_error_json(
+                    file_content, file_path, _version
                 )
             elif clean_type == CleanType.all:
-                _, _file_content = self._solc_check(
-                    file_path, _version, file_content
+                _, _file_content = self.check_solc_error_json(
+                    file_content, file_path, _version
                 )
                 _cleansed = self._check_constructor_emit(
                     file_path, _version, _file_content
                 )
-                _, _file_content = self._solc_check(
-                    file_path, _version, _cleansed
+                _, _cleansed = self.check_solc_error_json(
+                    _cleansed, file_path, _version
                 )
 
             with open(file_path, "w") as f:
@@ -914,20 +958,12 @@ class Cleaner:
             logger.exception(f"Error processing file: {file_path}\n")
             logger.exception(f"{str(e)}\n")
 
-    def _solc_check(self, path, _version, _cleansed):
-        if version.parse(_version) >= version.parse("0.4.11"):
-            return self.check_solc_error_json(_cleansed, path, _version)
-        else:
-            return self.check_solc_error_legacy(_cleansed, path, _version)
-
     def _check_constructor_emit(self, path, _version, file_content: str):
         updated = None
 
         if version.parse(_version) < version.parse("0.4.22"):
             # Get the contract names
-            contract_names = self.get_contract_names(
-                path, file_content, _version
-            )
+            contract_names = self.get_contract_names_legacy(file_content)
 
             # Replace constructors for each contract
             updated = self.replace_constructors(file_content, contract_names)
