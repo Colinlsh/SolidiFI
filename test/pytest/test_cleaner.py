@@ -99,6 +99,9 @@ def test_clean_list_no_pragma(files):
         "test/files/contracts-dataset/Clean/172.sol",
         "test/files/contracts-dataset/Clean/3708.sol",
         "test/files/contracts-dataset/Clean/3390.sol",
+        "test/files/contracts-dataset/Clean/1929.sol",
+        "test/files/contracts-dataset/Clean/2021.sol",
+        "test/files/contracts-dataset/Clean/4254.sol",
     ],
 )
 def test_clean_all(files):
@@ -207,14 +210,25 @@ def test_run_subprocess_docker(path):
 
 
 @pytest.mark.parametrize(
-    "file",
+    "file, error_message",
     [
-        "test/files/contracts-dataset/Clean/702.sol",
+        (
+            "test/files/contracts-dataset/Clean/702.sol",
+            '702.sol:564:9: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (bytes32) external - did you forget the "payable" modifier?\n        ix.getPayments().payForDemocracy.value(msg.value)(democHash);\n        ^------------------------------------^\n',
+        ),
+        (
+            "test/files/contracts-dataset/Clean/4254.sol",
+            '4254.sol:580:19: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (address) external returns (bool) - did you forget the "payable" modifier?\n            if (! TokenController(controller).proxyPayment.value(msg.value)(msg.sender))\n                  ^--------------------------------------------^\n',
+        ),
+        (
+            "test/files/contracts-dataset/Clean/3209.sol",
+            '3209.sol:170:13: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (address) external returns (bool) - did you forget the "payable" modifier?\n        if (currentCorpBank_.deposit.value(msg.value)(msg.sender) == true) {\n            ^----------------------------^\n',
+        ),
     ],
 )
-def test_check_dot_value_error(file):
+def test_check_dot_value_error(file, error_message):
     cleaner = Cleaner(True)
-    error_message = '702.sol:564:9: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (bytes32) external - did you forget the "payable" modifier?\n        ix.getPayments().payForDemocracy.value(msg.value)(democHash);\n        ^------------------------------------^\n'
+
     with open(file, "r") as f:
         file_contents = f.read()
 

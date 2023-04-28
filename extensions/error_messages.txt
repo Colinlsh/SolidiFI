@@ -62,3 +62,5 @@
 'Installing \'0.4.18\'...\nVersion \'0.4.18\' installed.\nSwitched global version to 0.4.18\n{"errors":[{"component":"general","formattedMessage":"* Line 2, Column 1\\n  Syntax error: value, object or array expected.\\n","message":"* Line 2, Column 1\\n  Syntax error: value, object or array expected.\\n","severity":"error","type":"JSONError"}]}\n'
 
 'docker run --rm --name solc-select-solc-a4712982-4bb2-4dcb-a6e5-acde27110d57 -i -a stdin -a stdout -a stderr solc_select_solc solc-select install 0.4.18 && solc-select use 0.4.18 && solc --standard-json'
+
+'4254.sol:580:19: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (address) external returns (bool) - did you forget the "payable" modifier?\n            if (! TokenController(controller).proxyPayment.value(msg.value)(msg.sender))\n                  ^--------------------------------------------^\n'

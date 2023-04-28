@@ -6,6 +6,7 @@ from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
 import re
+import tempfile
 from typing import List, Tuple
 
 import regex
@@ -21,6 +22,7 @@ from .utils.helpers import (
 )
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
+from slither import Slither
 
 logger = LoggerSetup.get_logger(__name__)
 
@@ -58,12 +60,25 @@ class Cleaner:
     def get_contract_names(
         self, file_contents: str, version: str = ""
     ) -> list[str]:
-        source_unit = parser.parse(file_contents)
-        return [
-            node["name"]
-            for node in source_unit["children"]
-            if node["type"] == "ContractDefinition"
-        ]
+        change_solc_version(version)
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sol") as temp:
+            temp.write(file_contents.encode())
+            temp_filename = temp.name
+
+        try:
+            slither = Slither(temp_filename)
+
+            return [c.name for c in slither.contracts]
+        finally:
+            os.unlink(temp_filename)
+
+        # source_unit = parser.parse(file_contents)
+        # return [
+        #     node["name"]
+        #     for node in source_unit["children"]
+        #     if node["type"] == "ContractDefinition"
+        # ]
 
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
         stack = []
@@ -377,7 +392,17 @@ class Cleaner:
                 r"if\s*\(.*?\s*([\w_.]+\.\w+\.value\(.*?\)\(.*?\)).*\)",
                 error_msg,
             )
-            line = line_match.group(1)
+            if line_match:
+                line = line_match.group(1)
+            else:
+                _line = error_msg.split("if")[1].strip()[1:-1].replace("!", "")
+                if any(
+                    op in _line for op in ["==", "!=", "<=", ">=", "<", ">"]
+                ):
+                    line = re.split("==|!=|<=|>=|<|>", _line)[0].strip()
+                else:
+                    line = _line.strip()
+
         elif self.is_require(error_msg):
             line_match = regex.search(
                 r"require\((.*?\.value\(.*?\)\(.*?\))\)", error_msg
@@ -468,17 +493,28 @@ class Cleaner:
         )
 
     def clean_parse_error(self, file_contents: str, error_msg: str) -> str:
-        # The pattern will match the modifier declaration and the underscore
-        pattern = r"(modifier\s+\w+\s+\{[\s\S]*?)(\_)([\s\S]*?\})"
+        line_number = error_msg.split(".sol:")[1].split(":")[0]
 
-        # The replacement function inserts a semicolon after the underscore
-        def add_semicolon(match):
-            return match.group(1) + match.group(2) + ";" + match.group(3)
+        file_split = file_contents.splitlines()
 
-        # Apply the replacement function to all matching patterns in the code
-        corrected_code = re.sub(pattern, add_semicolon, file_contents)
+        # search up
+        _add_to_index = self.search_up_for_semi_colon_and_underscorce(
+            file_split, int(line_number)
+        )
+
+        file_split[_add_to_index] = file_split[_add_to_index] + ";"
+
+        corrected_code = "\n".join(file_split)
 
         return corrected_code
+
+    def search_up_for_semi_colon_and_underscorce(self, file_content, index):
+        if "_" in file_content[index] and ";" not in file_content[index]:
+            return index
+        else:
+            return self.search_up_for_semi_colon_and_underscorce(
+                file_content, index - 1
+            )
 
     def clean_constructor_error(self, file_contents: str, error_msg: str):
         # Extract the problematic line from the error message

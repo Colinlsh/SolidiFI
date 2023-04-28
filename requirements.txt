@@ -7,4 +7,5 @@ pytest
 solc-select
 solidity-parser
 regex
+slither-analyzer==0.9.1
 -e .
