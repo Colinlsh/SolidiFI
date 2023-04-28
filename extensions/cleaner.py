@@ -6,7 +6,6 @@ from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
 import re
-import tempfile
 from typing import List, Tuple
 
 import regex
@@ -60,26 +59,6 @@ class Cleaner:
     def get_contract_names(
         self, file_path, file_contents: str, _version: str = ""
     ) -> list[str]:
-        # change_solc_version(version)
-        # # Create a temporary file
-        # with tempfile.NamedTemporaryFile(delete=False, suffix=".sol") as temp:
-        #     temp.write(file_contents.encode())
-        #     temp_filename = temp.name
-
-        # try:
-        #     slither = Slither(temp_filename)
-
-        #     return [c.name for c in slither.contracts]
-        # finally:
-        #     os.unlink(temp_filename)
-
-        # source_unit = parser.parse(file_contents)
-        # return [
-        #     node["name"]
-        #     for node in source_unit["children"]
-        #     if node["type"] == "ContractDefinition"
-        # ]
-
         head, tail = os.path.split(file_path)
         input_json_str = {
             "language": "Solidity",
@@ -110,19 +89,30 @@ class Cleaner:
 
             compilation_result = json.loads(result)
 
-        if version.parse(_version) > version.parse("0.4.11"):
+        if tail in compilation_result["sources"]:
+            if version.parse(_version) > version.parse("0.4.11"):
+                return [
+                    node["name"]
+                    for node in compilation_result["sources"][tail]["ast"][
+                        "nodes"
+                    ]
+                    if node["nodeType"] == "ContractDefinition"
+                ]
+            else:
+                return [
+                    child["attributes"]["name"]
+                    for child in compilation_result["sources"][tail][
+                        "legacyAST"
+                    ]["children"]
+                    if child["name"] == "ContractDefinition"
+                ]
+        else:
+            # back up method
+            source_unit = parser.parse(file_contents)
             return [
                 node["name"]
-                for node in compilation_result["sources"][tail]["ast"]["nodes"]
-                if node["nodeType"] == "ContractDefinition"
-            ]
-        else:
-            return [
-                child["attributes"]["name"]
-                for child in compilation_result["sources"][tail]["legacyAST"][
-                    "children"
-                ]
-                if child["name"] == "ContractDefinition"
+                for node in source_unit["children"]
+                if node["type"] == "ContractDefinition"
             ]
 
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
@@ -671,7 +661,7 @@ class Cleaner:
         self,
         file_content: str,
         file_path: str,
-        version: str,
+        solc_version: str,
         solc_bin_path: str = None,
     ) -> Tuple[bool, str]:
         has_error = False
@@ -691,7 +681,7 @@ class Cleaner:
 
         if self.check_with_docker:
             stdout, stderr, exit_code = compile_with_docker(
-                version, standard_json_input_str
+                solc_version, standard_json_input_str
             )
         else:
             command = f"solc --standard-json"
@@ -707,7 +697,7 @@ class Cleaner:
         # Parse the JSON output from solc
         if stdout:
             try:
-                pattern = f"Switched global version to {version}\n"
+                pattern = f"Switched global version to {solc_version}\n"
                 if pattern in stdout:
                     stdout = stdout.split(pattern)[1].strip("\n")
 
@@ -776,18 +766,18 @@ class Cleaner:
                             f"Error found in {file_path}\n \tError at line {line_number}: {message}\n {formatted_message}"
                         )
 
-                    if updated:
-                        (
-                            _has_error,
-                            _,
-                        ) = self.check_solc_error_json(
-                            updated, file_path, version
-                        )
-                        if not _has_error:
-                            with open(file_path, "w") as f:
-                                f.write(updated)
+                if updated:
+                    (
+                        _has_error,
+                        _updated,
+                    ) = self.check_solc_error_json(
+                        updated, file_path, solc_version
+                    )
+                    if not _has_error:
+                        updated = _updated
+                        has_error = _has_error
 
-            return has_error, file_content if not updated else updated
+            return has_error, updated if updated else file_content
 
         elif stderr:
             logger.error(stderr)
@@ -857,7 +847,7 @@ class Cleaner:
 
     def clean(
         self,
-        path: str,
+        file_path: str,
         total_files: int,
         solidity_version: str = "0",
         shared_processed_files: ValueProxy = None,
@@ -868,7 +858,7 @@ class Cleaner:
             _version_fixed = None
             _version = None
 
-            with open(path, "r") as f:
+            with open(file_path, "r") as f:
                 file_content = f.read()
 
             if solidity_version != "0":
@@ -877,32 +867,39 @@ class Cleaner:
                 change_solc_version(_version)
 
             else:
-                _version = check_solidity_file_version(path)
+                _version = check_solidity_file_version(file_path)
 
             if _version == None:
                 if is_pragma_invalid(file_content):
                     file_content, _version_fixed = fix_pragma(file_content)
                 if _version_fixed == None:
-                    _version, file_content = self.insert_pragma_solidity(path)
+                    _version, file_content = self.insert_pragma_solidity(
+                        file_path
+                    )
                 else:
                     _version = _version_fixed
 
-            version_number = int(_version.split(".")[2])
-
             if clean_type == CleanType.constructor_enum:
                 _cleansed = self._check_constructor_emit(
-                    path, _version, file_content
+                    file_path, _version, file_content
                 )
             elif clean_type == CleanType.solc_error:
-                self._solc_check(path, _version, version_number, file_content)
+                _, _cleansed = self._solc_check(
+                    file_path, _version, file_content
+                )
             elif clean_type == CleanType.all:
-                _, file_content = self._solc_check(
-                    path, _version, version_number, file_content
+                _, _file_content = self._solc_check(
+                    file_path, _version, file_content
                 )
                 _cleansed = self._check_constructor_emit(
-                    path, _version, file_content
+                    file_path, _version, _file_content
                 )
-                self._solc_check(path, _version, version_number, _cleansed)
+                _, _file_content = self._solc_check(
+                    file_path, _version, _cleansed
+                )
+
+            with open(file_path, "w") as f:
+                f.write(_cleansed)
 
             if shared_processed_files and lock:
                 with lock:
@@ -914,47 +911,43 @@ class Cleaner:
                         suffix="Complete",
                     )
         except Exception as e:
-            logger.exception(f"Error processing file: {path}\n")
+            logger.exception(f"Error processing file: {file_path}\n")
             logger.exception(f"{str(e)}\n")
 
-    def _solc_check(self, path, _version, version_number, _cleansed):
-        if version_number >= 11:
+    def _solc_check(self, path, _version, _cleansed):
+        if version.parse(_version) >= version.parse("0.4.11"):
             return self.check_solc_error_json(_cleansed, path, _version)
         else:
             return self.check_solc_error_legacy(_cleansed, path, _version)
 
-    def _check_constructor_emit(self, path, _version, file_contents: str):
-        version_number = int(_version.split(".")[2])
+    def _check_constructor_emit(self, path, _version, file_content: str):
         updated = None
 
-        if version_number < 22:
+        if version.parse(_version) < version.parse("0.4.22"):
             # Get the contract names
             contract_names = self.get_contract_names(
-                path, file_contents, _version
+                path, file_content, _version
             )
 
             # Replace constructors for each contract
-            updated = self.replace_constructors(file_contents, contract_names)
+            updated = self.replace_constructors(file_content, contract_names)
         else:
             # Get the contract names
             contract_names = self.get_contract_names(
-                path, file_contents, _version
+                path, file_content, _version
             )
 
             # Replace constructors for each contract
             updated = self.replace_old_to_new_constructors(
-                file_contents, contract_names
+                file_content, contract_names
             )
 
-        if version_number < 21:
+        if version.parse(_version) < version.parse("0.4.21"):
             updated = (
                 updated.replace("emit ", "")
                 if updated
-                else file_contents.replace("emit ", "")
+                else file_content.replace("emit ", "")
             )
-
-        with open(path, "w") as f:
-            f.write(updated)
 
         return updated
 
@@ -970,7 +963,7 @@ class Cleaner:
         # set_path_context()
         for file_path in chunks:
             result = self.clean(
-                path=Path(file_path),
+                file_path=Path(file_path),
                 total_files=total_files,
                 shared_processed_files=shared_processed_files,
                 lock=lock,
