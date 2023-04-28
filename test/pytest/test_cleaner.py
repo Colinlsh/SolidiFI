@@ -102,6 +102,8 @@ def test_clean_list_no_pragma(files):
         "test/files/contracts-dataset/Clean/1929.sol",
         "test/files/contracts-dataset/Clean/2021.sol",
         "test/files/contracts-dataset/Clean/4254.sol",
+        "test/files/contracts-dataset/Clean/3911.sol",
+        "test/files/contracts-dataset/Clean/1275.sol",
     ],
 )
 def test_clean_all(files):

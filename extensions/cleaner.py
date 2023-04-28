@@ -22,6 +22,7 @@ from .utils.helpers import (
 )
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
+from packaging import version
 
 logger = LoggerSetup.get_logger(__name__)
 
@@ -57,7 +58,7 @@ class Cleaner:
         return check_solidity_file_version(file_path), updated_content
 
     def get_contract_names(
-        self, file_path, file_contents: str, version: str = ""
+        self, file_path, file_contents: str, _version: str = ""
     ) -> list[str]:
         # change_solc_version(version)
         # # Create a temporary file
@@ -94,9 +95,11 @@ class Cleaner:
 
         input_json_str = json.dumps(input_json_str)
 
-        stdout, stderr, exit_code = compile_with_docker(version, input_json_str)
+        stdout, stderr, exit_code = compile_with_docker(
+            _version, input_json_str
+        )
 
-        pattern = f"Switched global version to {version}\n"
+        pattern = f"Switched global version to {_version}\n"
 
         if stderr:
             raise Exception(
@@ -107,11 +110,20 @@ class Cleaner:
 
             compilation_result = json.loads(result)
 
-        return [
-            node["name"]
-            for node in compilation_result["sources"][tail]["ast"]["nodes"]
-            if node["nodeType"] == "ContractDefinition"
-        ]
+        if version.parse(_version) > version.parse("0.4.11"):
+            return [
+                node["name"]
+                for node in compilation_result["sources"][tail]["ast"]["nodes"]
+                if node["nodeType"] == "ContractDefinition"
+            ]
+        else:
+            return [
+                child["attributes"]["name"]
+                for child in compilation_result["sources"][tail]["legacyAST"][
+                    "children"
+                ]
+                if child["name"] == "ContractDefinition"
+            ]
 
     def get_matching_brace_indices(self, s, open_brace="{", close_brace="}"):
         stack = []
@@ -857,7 +869,7 @@ class Cleaner:
             _version = None
 
             with open(path, "r") as f:
-                file_contents = f.read()
+                file_content = f.read()
 
             if solidity_version != "0":
                 _version = solidity_version
@@ -868,10 +880,10 @@ class Cleaner:
                 _version = check_solidity_file_version(path)
 
             if _version == None:
-                if is_pragma_invalid(file_contents):
-                    file_contents, _version_fixed = fix_pragma(file_contents)
+                if is_pragma_invalid(file_content):
+                    file_content, _version_fixed = fix_pragma(file_content)
                 if _version_fixed == None:
-                    _version, file_contents = self.insert_pragma_solidity(path)
+                    _version, file_content = self.insert_pragma_solidity(path)
                 else:
                     _version = _version_fixed
 
@@ -879,16 +891,16 @@ class Cleaner:
 
             if clean_type == CleanType.constructor_enum:
                 _cleansed = self._check_constructor_emit(
-                    path, _version, file_contents
+                    path, _version, file_content
                 )
             elif clean_type == CleanType.solc_error:
-                self._solc_check(path, _version, version_number, file_contents)
+                self._solc_check(path, _version, version_number, file_content)
             elif clean_type == CleanType.all:
-                _, file_contents = self._solc_check(
-                    path, _version, version_number, file_contents
+                _, file_content = self._solc_check(
+                    path, _version, version_number, file_content
                 )
                 _cleansed = self._check_constructor_emit(
-                    path, _version, file_contents
+                    path, _version, file_content
                 )
                 self._solc_check(path, _version, version_number, _cleansed)
 
