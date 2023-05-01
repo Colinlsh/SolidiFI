@@ -537,58 +537,50 @@ class Cleaner:
             )
 
     def clean_constructor_error(self, file_contents: str, error_msg: str):
-        # Extract the problematic line from the error message
-        line_regex = r"\n\s*(.*);\n\s*\^"
-        line_match = re.search(line_regex, error_msg)
-        if line_match:
-            line = line_match.group(1)
+        line = error_msg.split("\n")[1].strip().replace(";", "")
 
-            # Extract the constructor call
-            constructor_call_regex = r"\(new (\w+)\)\.value"
-            constructor_call_match = re.search(constructor_call_regex, line)
-            if constructor_call_match:
-                contract_name = constructor_call_match.group(1)
+        constructor_call_regex = r"\(new (\w+)\)\.value"
+        constructor_call_match = re.search(constructor_call_regex, line)
+        if constructor_call_match:
+            contract_ = line.replace("return", "").strip().split("value(")
+            _split_dot = contract_[0].split(".")
+            # Filter out empty strings
+            _split_dot = [x for x in _split_dot if x]
 
-                # print(f"Contract: {contract_name}")
+            contract_name = _split_dot[0].strip("(").strip(")")
 
-                # Count the number of arguments in the problematic line
-                function_args_regex = r"\(([^)]+)\)"
-                function_args_match = re.findall(function_args_regex, line)
-                if function_args_match:
-                    num_args = self.count_arguments(function_args_match[-1])
+            _c = contract_[1].split(")(")
+            contract_params = _c[1][0 : _c[1].rfind(")")].strip()
 
-                    # Find the constructor with the same number of arguments
-                    constructor_header_regex = rf"constructor\((.*?)\)"
-                    constructor_headers = re.findall(
-                        constructor_header_regex, file_contents
+            num_args = self.count_arguments(contract_params)
+
+            # Find the constructor with the same number of arguments
+            constructor_header_regex = rf"constructor\((.*?)\)"
+            constructor_headers = re.findall(
+                constructor_header_regex, file_contents
+            )
+
+            for header_args in constructor_headers:
+                header_num_args = self.count_arguments(header_args)
+
+                if header_num_args == num_args:
+                    new_constructor_header = (
+                        rf"constructor({header_args}) payable "
                     )
-
-                    for header_args in constructor_headers:
-                        header_num_args = self.count_arguments(header_args)
-
-                        if header_num_args == num_args:
-                            new_constructor_header = (
-                                rf"constructor({header_args}) payable "
-                            )
-                            constructor_header = rf"constructor({header_args})"
-                            updated_contract_code = re.sub(
-                                re.escape(constructor_header),
-                                new_constructor_header,
-                                file_contents,
-                            )
-                            return updated_contract_code
-                else:
-                    raise Exception(
-                        "Arguments not found in the problematic line."
+                    constructor_header = rf"constructor({header_args})"
+                    updated_contract_code = re.sub(
+                        re.escape(constructor_header),
+                        new_constructor_header,
+                        file_contents,
                     )
+                    return updated_contract_code
+
             else:
                 raise Exception(
                     "Constructor call not found in the problematic line."
                 )
         else:
             raise Exception("Problematic line not found in the error message.")
-
-        return None
 
     def is_payable_error(self, error_msg):
         # Regex pattern to match the specific TypeError

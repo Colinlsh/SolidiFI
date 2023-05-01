@@ -66,3 +66,5 @@
 '4254.sol:580:19: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (address) external returns (bool) - did you forget the "payable" modifier?\n            if (! TokenController(controller).proxyPayment.value(msg.value)(msg.sender))\n                  ^--------------------------------------------^\n'
 
 '1155.sol:291:13: TypeError: Member "value" not found or not visible after argument-dependent lookup in function (address,uint8,string memory) external returns (uint256) - did you forget the "payable" modifier?\n            ZTHTKN.buyAndSetDivPercentage.value(savings)(address(0x0), 33, "");\n            ^---------------------------------^\n'
+
+'1929.sol:523:1: ParserError: Expected pragma, import directive or contract/interface/library definition.\n/**\n^ (Relevant source part starts here and spans across multiple lines).\n'

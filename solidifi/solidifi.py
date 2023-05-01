@@ -5,13 +5,16 @@ from dataclasses import dataclass
 from io import BufferedReader
 import json
 import shutil
+import tempfile
 import traceback
 from typing import List
+import uuid
 import ijson
 import re, os
 import configparser
 from extensions.cleaner import Cleaner
 from extensions.logger import LoggerSetup
+from packaging import version
 
 from extensions.utils.helpers import check_solidity_file_version, run_subprocess
 
@@ -65,61 +68,97 @@ class Solidifi:
         shutil.copyfile(buggy_file_path, tmp_buggy_file_path)
         self.src_contr_file = tmp_buggy_file_path
 
-        _version = check_solidity_file_version(file_path)
-        self.cleaner.clean(file_path, _version)
+        solc_version = check_solidity_file_version(file_path)
+        # self.cleaner.clean(file_path, _version)
 
         """ Generate AST"""
         ast_json_files_dir = os.path.join(output_dir, "ast")
         os.makedirs(ast_json_files_dir, exist_ok=True)
         head, tail = os.path.split(file_path)
 
-        ast_json_file = f"{ast_json_files_dir}/buggy_{tail}_json.ast"
+        container_name = f"solc-select-solc-{uuid.uuid4()}"
+        file_contents = f""
+        with open(file_path, "r") as f:
+            file_contents = f.read()
 
-        stdout, stderr, exit_code = run_subprocess(
-            f"solc --ast-json {self.cur_contr_file} -o {ast_json_files_dir} --overwrite"
+        stdout, stderr, exit_code = self.convert_old(
+            solc_version,
+            container_name,
+            file_contents,
         )
-        if exit_code != 0:
-            logger.error(
-                f"Solidity compiler returned an error (code: {exit_code}):"
-            )
-            error_msg = stderr.decode("utf-8")
-            # print(error_msg)
-            # Read the original file
-            with open(self.cur_contr_file, "r") as f:
-                file_contents = f.read()
 
-            # Prepend the error message to the contents of the original file
-            new_file_contents = f"/*{error_msg}*/\n\n{file_contents}"
+        # if version.parse(solc_version) >= version.parse("0.4.12"):
+        #     stdout, stderr, exit_code = self.convert_new(
+        #         solc_version, tail, container_name, file_contents
+        #     )
+        # else:
+        #     stdout, stderr, exit_code = self.convert_old(
+        #         solc_version,
+        #         container_name,
+        #         file_contents,
+        #     )
 
-            # Save the new file to a different location
-            destination_folder = "test/files/contracts-dataset/Error files"
-            destination_file = os.path.join(
-                destination_folder, os.path.basename(self.cur_contr_file)
-            )
-            with open(destination_file, "w") as f:
-                f.write(new_file_contents)
+        if stdout:
+            stdout = stdout[stdout.find("{") : stdout.rfind("}") + 1]
 
-            exit()
+            _res = json.loads(stdout)
+
+            if "sources" in _res:
+                if "ast" in _res["sources"][tail]:
+                    ast_json_file = _res["sources"][tail]["ast"]
+                elif "legacyAST" in _res["sources"][tail]:
+                    ast_json_file = _res["sources"][tail]["legacyAST"]
+            else:
+                if _res["name"] == "SourceUnit":
+                    ast_json_file = _res
+
+        elif stderr:
+            logger.error(f"Error: {stderr}")
+
+        self.cur_contr_ast_data = ast_json_file
+
+        # if exit_code != 0:
+        #     logger.error(
+        #         f"Solidity compiler returned an error (code: {exit_code}):"
+        #     )
+        #     error_msg = stderr.decode("utf-8")
+        #     # print(error_msg)
+        #     # Read the original file
+        #     with open(self.cur_contr_file, "r") as f:
+        #         file_contents = f.read()
+
+        #     # Prepend the error message to the contents of the original file
+        #     new_file_contents = f"/*{error_msg}*/\n\n{file_contents}"
+
+        #     # Save the new file to a different location
+        #     destination_folder = "test/files/contracts-dataset/Error files"
+        #     destination_file = os.path.join(
+        #         destination_folder, os.path.basename(self.cur_contr_file)
+        #     )
+        #     with open(destination_file, "w") as f:
+        #         f.write(new_file_contents)
+
+        #     exit()
         # os.system(ast_cmd)
         # if not(os.path.isfile(ast_json_file)):
         #     #print("unable to generate AST")
         #     exit()
 
-        preprocess_json_file(ast_json_file)
+        # preprocess_json_file(ast_json_file)
 
-        with open(ast_json_file) as fh:
-            file_contents = fh.read()
-            if file_contents.strip():
-                try:
-                    self.cur_contr_ast_data = json.loads(file_contents)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Error decoding JSON: {e}")
-                    self.cur_contr_ast_data = None
-            else:
-                logger.error(
-                    f"File '{ast_json_file}' is empty or contains only whitespace."
-                )
-                self.cur_contr_ast_data = None
+        # with open(ast_json_file) as fh:
+        #     file_contents = fh.read()
+        #     if file_contents.strip():
+        #         try:
+        #             self.cur_contr_ast_data = json.loads(file_contents)
+        #         except json.JSONDecodeError as e:
+        #             logger.error(f"Error decoding JSON: {e}")
+        #             self.cur_contr_ast_data = None
+        #     else:
+        #         logger.error(
+        #             f"File '{ast_json_file}' is empty or contains only whitespace."
+        #         )
+        #         self.cur_contr_ast_data = None
 
         self.inject_bug(bug_type)
         csv_file = os.path.join(
@@ -140,6 +179,45 @@ class Solidifi:
             traceback.print_exc()
 
         os.remove(tmp_buggy_file_path)
+
+    def convert_new(self, solc_version, tail, container_name, file_contents):
+        input_json_str = {
+            "language": "Solidity",
+            "sources": {tail: {"content": file_contents}},
+            "settings": {
+                "outputSelection": {
+                    "*": {
+                        "": ["ast"],
+                    },
+                },
+            },
+        }
+
+        input_json_str = json.dumps(input_json_str)
+
+        docker_run_command = (
+            f"docker run --rm --name {container_name} -i -a stdin -a stdout -a stderr solc_select_solc"
+            f" /bin/bash -c 'solc-select use {solc_version} && solc --standard-json'"
+        )
+
+        return run_subprocess(docker_run_command, input_data=input_json_str)
+
+    def convert_old(self, solc_version, container_name, file_contents: str):
+        with tempfile.NamedTemporaryFile(
+            suffix=".sol", delete=False
+        ) as temp_file:
+            temp_file_path = temp_file.name
+            temp_file.write(file_contents.encode())
+
+        container_name = f"solc-select-solc-{uuid.uuid4()}"
+        docker_run_command = (
+            f"docker run --rm --name {container_name} -v {temp_file_path}:{temp_file_path} -i -a stdin -a stdout -a stderr solc_select_solc"
+            f" /bin/bash -c 'solc-select use {solc_version} && solc --ast-json {temp_file_path}'"
+        )
+
+        return run_subprocess(
+            f"{docker_run_command}",
+        )
 
     def inject_bug(self, bug_type):
         injected_loc_src_mapping = []
@@ -179,11 +257,14 @@ class Solidifi:
 
             BIP = self.get_potential_locs(self.cur_contr_ast_data, bug_forms)
             for loc in reversed(BIP):
-                if not bug_seq < len(bugfiles):
-                    logger.error("Running out of bug snippets")
-                    break
+                # if not bug_seq < len(bugfiles):
+                # logger.error("Running out of bug snippets")
+                # break
                 bug_f: BufferedReader = open(
-                    os.path.join(cur_bug_dir, bugfiles[bug_seq]), "rb"
+                    os.path.join(
+                        cur_bug_dir, bugfiles[bug_seq % len(bugfiles)]
+                    ),
+                    "rb",
                 )
                 bug_snip = bug_f.read()
                 ##print(os.path.join(cur_bug_dir,bugfiles[bug_seq]))

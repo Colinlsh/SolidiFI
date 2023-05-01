@@ -2,7 +2,8 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Manager, Pool, cpu_count
+from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
 import traceback
@@ -41,6 +42,9 @@ class BugInjector:
         file_path: str,
         bug_type: BugType,
         output_path: str = "test/output",
+        shared_processed_files=None,
+        lock=None,
+        total_files=None,
     ) -> None:
         try:
             # print(f"injecting {bug_type.name} bug into {file_path}")
@@ -55,7 +59,18 @@ class BugInjector:
 
             self.solidifi.inject(file_path, tail, _bug_info.name, output_path)
 
+            if shared_processed_files and lock and total_files is not None:
+                with lock:
+                    shared_processed_files.value += 1
+                    self.progress_updater.print_progress_bar(
+                        shared_processed_files.value,
+                        total_files,
+                        prefix="Progress:",
+                        suffix="Complete",
+                    )
+
         except Exception as e:
+            logger.error(f"Error found in file {file_path}: {e}")
             traceback.print_exc()
 
     def inject_multiple_concurrently(
@@ -86,44 +101,55 @@ class BugInjector:
                 path_list_str[i : i + chunk_size]
                 for i in range(0, len(path_list_str), chunk_size)
             ]
-
-            # Create a pool of worker processes
-            with Pool(processes=num_of_process) as pool:
-                # Process each chunk in parallel
-                processed_files = 0
+            with Manager() as manager:
+                shared_processed_files: ValueProxy = manager.Value("i", 0)
+                lock = manager.Lock()
+                # Create a pool of worker processes
+                with Pool(processes=num_of_process) as pool:
+                    # Process each chunk in parallel
+                    processed_files = 0
+                    self.progress_updater.print_progress_bar(
+                        processed_files,
+                        total_files,
+                        prefix="Progress:",
+                        suffix="Complete",
+                    )
+                    for chunk_result in pool.imap_unordered(
+                        partial(
+                            self._inject_it,
+                            bug_type=bug_type,
+                            output_path=output_path,
+                            shared_processed_files=shared_processed_files,
+                            lock=lock,
+                            total_files=total_files,
+                        ),
+                        chunks,
+                    ):
+                        pass
                 self.progress_updater.print_progress_bar(
-                    processed_files,
-                    total_files,
-                    prefix="Progress:",
-                    suffix="Complete",
+                    shared_processed_files.value, total_files, is_done=True
                 )
-                for chunk_result in pool.imap_unordered(
-                    partial(
-                        self._inject_it,
-                        bug_type=bug_type,
-                        output_path=output_path,
-                    ),
-                    chunks,
-                ):
-                    # Print the result of each file processing
-                    for file_result in chunk_result:
-                        processed_files += 1
-                        self.progress_updater.print_progress_bar(
-                            processed_files,
-                            total_files,
-                            prefix="Progress:",
-                            suffix="Complete",
-                        )
         except Exception as e:
             logger.exception(e)
             traceback.print_exc()
 
-    def _inject_it(self, chunk, bug_type, output_path):
+    def _inject_it(
+        self,
+        chunk,
+        bug_type,
+        output_path,
+        shared_processed_files,
+        lock,
+        total_files,
+    ):
         return [
             self.inject(
-                file_path=Path(file_path),
-                bug_type=bug_type,
-                output_path=Path(output_path),
+                Path(file_path),
+                bug_type,
+                Path(output_path),
+                shared_processed_files,
+                lock,
+                total_files,
             )
             for file_path in chunk
         ]
