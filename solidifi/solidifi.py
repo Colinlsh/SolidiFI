@@ -50,135 +50,142 @@ class Solidifi:
         bug_type: str,
         output_dir: str,
     ) -> None:
-        buggy_dir = os.path.join(output_dir, "buggy", bug_type)
-        os.makedirs(buggy_dir, exist_ok=True)
-        buggy_file_path = os.path.join(buggy_dir, "buggy_" + file_name_with_ext)
-
-        if os.path.isfile(buggy_file_path):
-            os.remove(buggy_file_path)
-        shutil.copyfile(file_path, buggy_file_path)
-        self.src_contr_file = file_path
-        self.cur_contr_file = buggy_file_path
-
-        tmp_buggy_file_path = os.path.join(
-            buggy_dir, "tmp_buggy_" + file_name_with_ext
-        )
-        if os.path.isfile(tmp_buggy_file_path):
-            os.remove(tmp_buggy_file_path)
-        shutil.copyfile(buggy_file_path, tmp_buggy_file_path)
-        self.src_contr_file = tmp_buggy_file_path
-
-        solc_version = check_solidity_file_version(file_path)
-        # self.cleaner.clean(file_path, _version)
-
-        """ Generate AST"""
-        ast_json_files_dir = os.path.join(output_dir, "ast")
-        os.makedirs(ast_json_files_dir, exist_ok=True)
-        head, tail = os.path.split(file_path)
-
-        container_name = f"solc-select-solc-{uuid.uuid4()}"
-        file_contents = f""
-        with open(file_path, "r") as f:
-            file_contents = f.read()
-
-        stdout, stderr, exit_code = self.convert_old(
-            solc_version,
-            container_name,
-            file_contents,
-        )
-
-        # if version.parse(solc_version) >= version.parse("0.4.12"):
-        #     stdout, stderr, exit_code = self.convert_new(
-        #         solc_version, tail, container_name, file_contents
-        #     )
-        # else:
-        #     stdout, stderr, exit_code = self.convert_old(
-        #         solc_version,
-        #         container_name,
-        #         file_contents,
-        #     )
-
-        if stdout:
-            stdout = stdout[stdout.find("{") : stdout.rfind("}") + 1]
-
-            _res = json.loads(stdout)
-
-            if "sources" in _res:
-                if "ast" in _res["sources"][tail]:
-                    ast_json_file = _res["sources"][tail]["ast"]
-                elif "legacyAST" in _res["sources"][tail]:
-                    ast_json_file = _res["sources"][tail]["legacyAST"]
-            else:
-                if _res["name"] == "SourceUnit":
-                    ast_json_file = _res
-
-        elif stderr:
-            logger.error(f"Error: {stderr}")
-
-        self.cur_contr_ast_data = ast_json_file
-
-        # if exit_code != 0:
-        #     logger.error(
-        #         f"Solidity compiler returned an error (code: {exit_code}):"
-        #     )
-        #     error_msg = stderr.decode("utf-8")
-        #     # print(error_msg)
-        #     # Read the original file
-        #     with open(self.cur_contr_file, "r") as f:
-        #         file_contents = f.read()
-
-        #     # Prepend the error message to the contents of the original file
-        #     new_file_contents = f"/*{error_msg}*/\n\n{file_contents}"
-
-        #     # Save the new file to a different location
-        #     destination_folder = "test/files/contracts-dataset/Error files"
-        #     destination_file = os.path.join(
-        #         destination_folder, os.path.basename(self.cur_contr_file)
-        #     )
-        #     with open(destination_file, "w") as f:
-        #         f.write(new_file_contents)
-
-        #     exit()
-        # os.system(ast_cmd)
-        # if not(os.path.isfile(ast_json_file)):
-        #     #print("unable to generate AST")
-        #     exit()
-
-        # preprocess_json_file(ast_json_file)
-
-        # with open(ast_json_file) as fh:
-        #     file_contents = fh.read()
-        #     if file_contents.strip():
-        #         try:
-        #             self.cur_contr_ast_data = json.loads(file_contents)
-        #         except json.JSONDecodeError as e:
-        #             logger.error(f"Error decoding JSON: {e}")
-        #             self.cur_contr_ast_data = None
-        #     else:
-        #         logger.error(
-        #             f"File '{ast_json_file}' is empty or contains only whitespace."
-        #         )
-        #         self.cur_contr_ast_data = None
-
-        self.inject_bug(bug_type)
-        csv_file = os.path.join(
-            buggy_dir,
-            "BugLog_"
-            + file_name_with_ext[0 : len(file_name_with_ext) - 4]
-            + ".csv",
-        )
-        csv_columns = ["loc", "length", "bug type", "approach"]
         try:
-            with open(csv_file, "w") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-                writer.writeheader()
-                for data in self.BugLog:
-                    writer.writerow(data)
-        except IOError:
-            logger.error("I/O error")
-            traceback.print_exc()
+            buggy_dir = os.path.join(output_dir, "buggy", bug_type)
+            os.makedirs(buggy_dir, exist_ok=True)
+            buggy_file_path = os.path.join(
+                buggy_dir, "buggy_" + file_name_with_ext
+            )
 
-        os.remove(tmp_buggy_file_path)
+            if os.path.isfile(buggy_file_path):
+                os.remove(buggy_file_path)
+            shutil.copyfile(file_path, buggy_file_path)
+            self.src_contr_file = file_path
+            self.cur_contr_file = buggy_file_path
+
+            tmp_buggy_file_path = os.path.join(
+                buggy_dir, "tmp_buggy_" + file_name_with_ext
+            )
+            if os.path.isfile(tmp_buggy_file_path):
+                os.remove(tmp_buggy_file_path)
+            shutil.copyfile(buggy_file_path, tmp_buggy_file_path)
+            self.src_contr_file = tmp_buggy_file_path
+
+            solc_version = check_solidity_file_version(file_path)
+            # self.cleaner.clean(file_path, _version)
+
+            """ Generate AST"""
+            ast_json_files_dir = os.path.join(output_dir, "ast")
+            os.makedirs(ast_json_files_dir, exist_ok=True)
+            head, tail = os.path.split(file_path)
+
+            container_name = f"solc-select-solc-{uuid.uuid4()}"
+            file_contents = f""
+            with open(file_path, "r") as f:
+                file_contents = f.read()
+
+            stdout, stderr, exit_code = self.convert_old(
+                solc_version,
+                container_name,
+                file_contents,
+            )
+
+            # if version.parse(solc_version) >= version.parse("0.4.12"):
+            #     stdout, stderr, exit_code = self.convert_new(
+            #         solc_version, tail, container_name, file_contents
+            #     )
+            # else:
+            #     stdout, stderr, exit_code = self.convert_old(
+            #         solc_version,
+            #         container_name,
+            #         file_contents,
+            #     )
+            ast_json_file = None
+            if stdout:
+                stdout = stdout[stdout.find("{") : stdout.rfind("}") + 1]
+
+                _res = json.loads(stdout)
+
+                if "sources" in _res:
+                    if "ast" in _res["sources"][tail]:
+                        ast_json_file = _res["sources"][tail]["ast"]
+                    elif "legacyAST" in _res["sources"][tail]:
+                        ast_json_file = _res["sources"][tail]["legacyAST"]
+                else:
+                    if _res["name"] == "SourceUnit":
+                        ast_json_file = _res
+
+            elif stderr:
+                logger.error(f"Error: {stderr}")
+
+            if not ast_json_file:
+                raise Exception(f"Error no valid ast format found: {file_path}")
+
+            self.cur_contr_ast_data = ast_json_file
+
+            # if exit_code != 0:
+            #     logger.error(
+            #         f"Solidity compiler returned an error (code: {exit_code}):"
+            #     )
+            #     error_msg = stderr.decode("utf-8")
+            #     # print(error_msg)
+            #     # Read the original file
+            #     with open(self.cur_contr_file, "r") as f:
+            #         file_contents = f.read()
+
+            #     # Prepend the error message to the contents of the original file
+            #     new_file_contents = f"/*{error_msg}*/\n\n{file_contents}"
+
+            #     # Save the new file to a different location
+            #     destination_folder = "test/files/contracts-dataset/Error files"
+            #     destination_file = os.path.join(
+            #         destination_folder, os.path.basename(self.cur_contr_file)
+            #     )
+            #     with open(destination_file, "w") as f:
+            #         f.write(new_file_contents)
+
+            #     exit()
+            # os.system(ast_cmd)
+            # if not(os.path.isfile(ast_json_file)):
+            #     #print("unable to generate AST")
+            #     exit()
+
+            # preprocess_json_file(ast_json_file)
+
+            # with open(ast_json_file) as fh:
+            #     file_contents = fh.read()
+            #     if file_contents.strip():
+            #         try:
+            #             self.cur_contr_ast_data = json.loads(file_contents)
+            #         except json.JSONDecodeError as e:
+            #             logger.error(f"Error decoding JSON: {e}")
+            #             self.cur_contr_ast_data = None
+            #     else:
+            #         logger.error(
+            #             f"File '{ast_json_file}' is empty or contains only whitespace."
+            #         )
+            #         self.cur_contr_ast_data = None
+
+            self.inject_bug(bug_type)
+            csv_file = os.path.join(
+                buggy_dir,
+                "BugLog_"
+                + file_name_with_ext[0 : len(file_name_with_ext) - 4]
+                + ".csv",
+            )
+            csv_columns = ["loc", "length", "bug type", "approach"]
+            try:
+                with open(csv_file, "w") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
+                    writer.writeheader()
+                    for data in self.BugLog:
+                        writer.writerow(data)
+            except IOError as io:
+                logger.error(f"I/O error: {file_path}: {io}")
+
+            os.remove(tmp_buggy_file_path)
+        except Exception as e:
+            logger.error(f"Error: {file_path}: {e}")
 
     def convert_new(self, solc_version, tail, container_name, file_contents):
         input_json_str = {
