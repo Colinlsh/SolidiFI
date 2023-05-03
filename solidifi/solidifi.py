@@ -1,20 +1,17 @@
-#!/usr/bin/python3
-
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BufferedReader
 import json
+import random
 import shutil
 import tempfile
-import traceback
-from typing import List
+from typing import List, Set
 import uuid
 import ijson
 import re, os
 import configparser
 from extensions.cleaner import Cleaner
 from extensions.logger import LoggerSetup
-from packaging import version
 
 from extensions.utils.helpers import check_solidity_file_version, run_subprocess
 
@@ -23,11 +20,8 @@ from solidifi.inject_file import (
     get_pattern_all_offsets,
     get_pattern_offset,
     get_snippet_at_offset,
-    preprocess_json_file,
     update,
 )
-
-logger = LoggerSetup.get_logger(__name__)
 
 
 @dataclass
@@ -42,6 +36,8 @@ class Solidifi:
         self.bugs_dir = bugs_dir
         self.BugLog = []
         self.cleaner = Cleaner()
+        self.logger = LoggerSetup.get_logger()
+        self.used_bugs = set()
 
     def inject(
         self,
@@ -116,55 +112,12 @@ class Solidifi:
                         ast_json_file = _res
 
             elif stderr:
-                logger.error(f"Error: {stderr}")
+                raise Exception(f"stderr Error: {stderr}")
 
             if not ast_json_file:
                 raise Exception(f"Error no valid ast format found: {file_path}")
 
             self.cur_contr_ast_data = ast_json_file
-
-            # if exit_code != 0:
-            #     logger.error(
-            #         f"Solidity compiler returned an error (code: {exit_code}):"
-            #     )
-            #     error_msg = stderr.decode("utf-8")
-            #     # print(error_msg)
-            #     # Read the original file
-            #     with open(self.cur_contr_file, "r") as f:
-            #         file_contents = f.read()
-
-            #     # Prepend the error message to the contents of the original file
-            #     new_file_contents = f"/*{error_msg}*/\n\n{file_contents}"
-
-            #     # Save the new file to a different location
-            #     destination_folder = "test/files/contracts-dataset/Error files"
-            #     destination_file = os.path.join(
-            #         destination_folder, os.path.basename(self.cur_contr_file)
-            #     )
-            #     with open(destination_file, "w") as f:
-            #         f.write(new_file_contents)
-
-            #     exit()
-            # os.system(ast_cmd)
-            # if not(os.path.isfile(ast_json_file)):
-            #     #print("unable to generate AST")
-            #     exit()
-
-            # preprocess_json_file(ast_json_file)
-
-            # with open(ast_json_file) as fh:
-            #     file_contents = fh.read()
-            #     if file_contents.strip():
-            #         try:
-            #             self.cur_contr_ast_data = json.loads(file_contents)
-            #         except json.JSONDecodeError as e:
-            #             logger.error(f"Error decoding JSON: {e}")
-            #             self.cur_contr_ast_data = None
-            #     else:
-            #         logger.error(
-            #             f"File '{ast_json_file}' is empty or contains only whitespace."
-            #         )
-            #         self.cur_contr_ast_data = None
 
             self.inject_bug(bug_type)
             csv_file = os.path.join(
@@ -181,11 +134,11 @@ class Solidifi:
                     for data in self.BugLog:
                         writer.writerow(data)
             except IOError as io:
-                logger.error(f"I/O error: {file_path}: {io}")
+                raise Exception(f"I/O error: {file_path}: {io}")
 
             os.remove(tmp_buggy_file_path)
         except Exception as e:
-            logger.error(f"Error: {file_path}: {e}")
+            self.logger.error(f"Error: {file_path}: {e}")
 
     def convert_new(self, solc_version, tail, container_name, file_contents):
         input_json_str = {
@@ -227,6 +180,7 @@ class Solidifi:
         )
 
     def inject_bug(self, bug_type):
+        self.used_bugs.clear()  # Reset the used bugs set
         injected_loc_src_mapping = []
         """Append a directory separator if not already present"""
         if not (self.bugs_dir.endswith("/") or self.bugs_dir.endswith("/")):
@@ -267,12 +221,27 @@ class Solidifi:
                 # if not bug_seq < len(bugfiles):
                 # logger.error("Running out of bug snippets")
                 # break
+
+                # Filter out used bugs
+                unused_bugs = [
+                    bug for bug in bugfiles if bug not in self.used_bugs
+                ]
+
+                # If all bugs have been used, you can't guarantee a unique bug anymore
+                if not unused_bugs:
+                    break
+
+                # Select a bug
+                selected_bug = random.choice(unused_bugs)
+
                 bug_f: BufferedReader = open(
-                    os.path.join(
-                        cur_bug_dir, bugfiles[bug_seq % len(bugfiles)]
-                    ),
+                    os.path.join(cur_bug_dir, selected_bug),
                     "rb",
                 )
+
+                # Record that we have used this bug for this contract
+                self.used_bugs.add(selected_bug)
+
                 bug_snip = bug_f.read()
                 ##print(os.path.join(cur_bug_dir,bugfiles[bug_seq]))
                 ##print(bug_snip)

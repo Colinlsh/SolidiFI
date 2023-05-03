@@ -1,10 +1,11 @@
 import logging
-
-from .utils.helpers import get_current_time
+import logging.handlers
+import multiprocessing
 
 
 class LoggerSetup:
     _instance = None
+    _logger = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -28,28 +29,20 @@ class LoggerSetup:
             self.initialized = True
 
     def setup(self):
-        logging.basicConfig(
-            filename=self.file_full_path,
-            filemode="a",
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-            level=self.log_level,
-        )
-
-        logging.basicConfig(level=self.log_level)
-        logger = logging.getLogger()
-        logger.setLevel(self.log_level)
-
+        # Set up the logger
+        LoggerSetup._logger = multiprocessing.get_logger()
+        LoggerSetup._logger.setLevel(self.log_level)
         formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            "[%(asctime)s| %(levelname)s| %(processName)s] %(message)s"
         )
+        handler = logging.FileHandler(self.file_full_path)
+        handler.setFormatter(formatter)
 
-        # Add a file handler to the logger
-        file_handler = logging.FileHandler(self.file_full_path)
-        file_handler.setFormatter(formatter)
-
-        logger.addHandler(file_handler)  # This line was missing
+        # this bit will make sure you won't have
+        # duplicated messages in the output
+        if not len(LoggerSetup._logger.handlers):
+            LoggerSetup._logger.addHandler(handler)
 
     @staticmethod
-    def get_logger(name):
-        return logging.getLogger(name)
+    def get_logger():
+        return LoggerSetup._logger

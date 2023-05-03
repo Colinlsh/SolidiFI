@@ -2,6 +2,7 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
+import logging
 from multiprocessing import Manager, Pool, cpu_count
 from multiprocessing.managers import ValueProxy
 import os
@@ -9,12 +10,11 @@ from pathlib import Path
 import traceback
 from typing import Optional
 from extensions.logger import LoggerSetup
+from .utils.helpers import get_log_level
 
 from solidifi.solidifi import Solidifi
 
 from .utils.progress_updater import ProgressUpdater
-
-logger = LoggerSetup.get_logger(__name__)
 
 
 class BugType(Enum):
@@ -36,6 +36,7 @@ class BugInjector:
     def __init__(self) -> None:
         self.progress_updater = ProgressUpdater()
         self.solidifi = Solidifi()
+        self.logger = LoggerSetup.get_logger()
 
     def inject(
         self,
@@ -46,9 +47,10 @@ class BugInjector:
         lock=None,
         total_files=None,
     ) -> None:
+        # Set up the logger for this child process
+        logger_setup = LoggerSetup("bug_injector", log_level=get_log_level())
+        _logger = logger_setup.get_logger()
         try:
-            # print(f"injecting {bug_type.name} bug into {file_path}")
-
             _bug_info = self._get_bug_info(bug_type)
 
             if not _bug_info:
@@ -70,8 +72,7 @@ class BugInjector:
                     )
 
         except Exception as e:
-            logger.error(f"Error found in file {file_path}: {e}")
-            traceback.print_exc()
+            _logger.error(f"Error found in file {file_path}: {e}")
 
     def inject_multiple_concurrently(
         self,
@@ -130,8 +131,7 @@ class BugInjector:
                     shared_processed_files.value, total_files, is_done=True
                 )
         except Exception as e:
-            logger.exception(e)
-            traceback.print_exc()
+            self.logger.exception(e)
 
     def _inject_it(
         self,

@@ -7,7 +7,7 @@ from extensions.logger import LoggerSetup
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_logging():
-    LoggerSetup(file_name="test_cleaner", log_level=logging.DEBUG)
+    LoggerSetup(file_name="test_injection", log_level=logging.DEBUG)
 
 
 @pytest.mark.parametrize(

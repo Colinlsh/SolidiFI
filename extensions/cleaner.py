@@ -1,6 +1,7 @@
 from enum import Enum
 from functools import partial
 import json
+import logging
 from multiprocessing import Manager, Pool, cpu_count
 from multiprocessing.managers import ValueProxy
 import os
@@ -18,14 +19,13 @@ from .utils.helpers import (
     check_solidity_file_version,
     compile_with_docker,
     fix_pragma,
+    get_log_level,
     is_pragma_invalid,
     run_subprocess,
 )
 from .utils.progress_updater import ProgressUpdater
 from solidity_parser import parser
 from packaging import version
-
-logger = LoggerSetup.get_logger(__name__)
 
 
 class CleanType(Enum):
@@ -42,6 +42,7 @@ class Cleaner:
     def __init__(self, check_with_docker: bool = True) -> None:
         self.progress_updater = ProgressUpdater()
         self.check_with_docker = check_with_docker
+        self.logger = LoggerSetup.get_logger()
 
     def insert_pragma_solidity(
         self, file_path, version="0.4.26"
@@ -741,7 +742,7 @@ class Cleaner:
             return has_error, updated if updated else file_content
 
         elif stderr:
-            logger.error(stderr)
+            raise Exception(f"stderr Error: {stderr}")
 
     def check_solc_error_new(
         self, file_content: str, solc_version: str, tail: str
@@ -869,6 +870,9 @@ class Cleaner:
         lock=None,
         clean_type: CleanType = 0,
     ) -> None:
+        # Set up the logger for this child process
+        logger_setup = LoggerSetup("cleaner", log_level=get_log_level())
+        _logger = logger_setup.get_logger()
         try:
             _version_fixed = None
             _version = None
@@ -926,8 +930,7 @@ class Cleaner:
                         suffix="Complete",
                     )
         except Exception as e:
-            logger.exception(f"Error processing file: {file_path}\n")
-            logger.exception(f"{str(e)}\n")
+            _logger.exception(f"Error processing file: {file_path}: {e}")
 
     def _check_constructor_emit(self, path, _version, file_content: str):
         updated = None
@@ -1034,7 +1037,7 @@ class Cleaner:
                     suffix="All done! exporting...",
                 )
         except Exception as e:
-            logger.exception(f"{str(e)}\n")
+            self.logger.exception(e)
 
     def clean_for_loop(
         self, directory: str, clean_type: CleanType = CleanType.all
@@ -1054,4 +1057,4 @@ class Cleaner:
                 processed_files += 1
 
         except Exception as e:
-            logger.error(e)
+            self.logger.error(e)

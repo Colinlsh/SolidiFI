@@ -4,12 +4,15 @@ import sys
 import time
 from extensions.logger import LoggerSetup
 
-from extensions.utils.helpers import check_solidity_file_version
+from extensions.utils.helpers import check_solidity_file_version, get_log_level
 
 from .solidifi import Solidifi
 
 
 def main(argv=None):
+    logger_setup = LoggerSetup(file_name="solidifi", log_level=get_log_level())
+    logger = logger_setup.get_logger()
+
     solidifi = Solidifi()
 
     solidifi.clear_globals()
@@ -46,12 +49,11 @@ def main(argv=None):
             exit_code = process.returncode
 
             if exit_code != 0:
-                print(
-                    f"Solidity compiler returned an error (code: {exit_code}):"
+                logger.error(
+                    f"Solidity compiler returned an error (code: {exit_code}): {stderr}"
                 )
-                print(stderr.decode("utf-8"))
             if not (os.path.isfile(argv[2])):
-                print("Specified source file does not exists")
+                logger.error("Specified source file does not exists")
 
             """Inject bugs using code tranforamtion approach"""
             # code_transform(cur_contr_file, argv[3])
@@ -78,6 +80,4 @@ def interior_main(opr, sc, bug_type):
 
 
 if __name__ == "__main__":
-    logger_setup = LoggerSetup(file_name="solidifi")
-    logger = logger_setup.get_logger(__name__)
     sys.exit(main())

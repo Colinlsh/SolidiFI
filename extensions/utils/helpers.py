@@ -1,12 +1,14 @@
 from datetime import datetime
 from enum import Enum
 from logging import Logger
+import logging
 import os
 import platform
 import re
 import subprocess
 from typing import Tuple
 import uuid
+from dotenv import load_dotenv
 
 import requests
 
@@ -223,3 +225,7 @@ def find_function_start_end(file_content: str):
             break
 
     return function_start, function_end
+
+
+def get_log_level():
+    return logging.ERROR
