@@ -8,7 +8,6 @@ import re
 import subprocess
 from typing import Tuple
 import uuid
-from dotenv import load_dotenv
 
 import requests
 
