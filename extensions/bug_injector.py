@@ -2,15 +2,13 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-import logging
 from multiprocessing import Manager, Pool, cpu_count
 from multiprocessing.managers import ValueProxy
 import os
 from pathlib import Path
-import traceback
 from typing import Optional
 from extensions.logger import LoggerSetup
-from .utils.helpers import get_log_level
+from .utils.helpers import get_logging_instance
 
 from solidifi.solidifi import Solidifi
 
@@ -48,8 +46,7 @@ class BugInjector:
         total_files=None,
     ) -> None:
         # Set up the logger for this child process
-        logger_setup = LoggerSetup("bug_injector", log_level=get_log_level())
-        _logger = logger_setup.get_logger()
+        _logger = get_logging_instance("bug_injector")
         try:
             _bug_info = self._get_bug_info(bug_type)
 

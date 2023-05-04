@@ -11,6 +11,8 @@ import uuid
 
 import requests
 
+from extensions.logger import LoggerSetup
+
 
 def set_path_context():
     # Set the PATH environment variable to include the path to solc
@@ -228,3 +230,8 @@ def find_function_start_end(file_content: str):
 
 def get_log_level():
     return logging.ERROR
+
+
+def get_logging_instance(name: str):
+    logger_setup = LoggerSetup(name, log_level=get_log_level())
+    return logger_setup.get_logger()

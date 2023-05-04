@@ -20,6 +20,7 @@ from .utils.helpers import (
     compile_with_docker,
     fix_pragma,
     get_log_level,
+    get_logging_instance,
     is_pragma_invalid,
     run_subprocess,
 )
@@ -871,8 +872,7 @@ class Cleaner:
         clean_type: CleanType = 0,
     ) -> None:
         # Set up the logger for this child process
-        logger_setup = LoggerSetup("cleaner", log_level=get_log_level())
-        _logger = logger_setup.get_logger()
+        _logger = get_logging_instance("cleaner")
         try:
             _version_fixed = None
             _version = None
