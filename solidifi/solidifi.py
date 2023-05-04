@@ -13,7 +13,12 @@ import configparser
 from extensions.cleaner import Cleaner
 from extensions.logger import LoggerSetup
 
-from extensions.utils.helpers import check_solidity_file_version, run_subprocess
+from extensions.utils.helpers import (
+    check_solidity_file_version,
+    export_to_csv,
+    prettier_format,
+    run_subprocess,
+)
 
 from solidifi.inject_file import (
     adjust_injected_loc,
@@ -25,16 +30,24 @@ from solidifi.inject_file import (
 
 
 @dataclass
+class BugLog:
+    start: int = 0
+    line_number: int = 0
+    size: int = 0
+    bug_type: str = ""
+    approach: str = ""
+    bug_snip: str = ""
+
+
+@dataclass
 class Solidifi:
     bugs_dir: str
     cur_contr_ast_data = None
     cur_contr_file = None
     src_contr_file = None
-    BugLog: List
 
     def __init__(self, bugs_dir: str = "bugs"):
         self.bugs_dir = bugs_dir
-        self.BugLog = []
         self.cleaner = Cleaner()
         self.logger = LoggerSetup.get_logger()
         self.used_bugs = set()
@@ -68,77 +81,66 @@ class Solidifi:
             self.src_contr_file = tmp_buggy_file_path
 
             solc_version = check_solidity_file_version(file_path)
-            # self.cleaner.clean(file_path, _version)
 
-            """ Generate AST"""
-            ast_json_files_dir = os.path.join(output_dir, "ast")
-            os.makedirs(ast_json_files_dir, exist_ok=True)
-            head, tail = os.path.split(file_path)
-
-            container_name = f"solc-select-solc-{uuid.uuid4()}"
-            file_contents = f""
-            with open(file_path, "r") as f:
-                file_contents = f.read()
-
-            stdout, stderr, exit_code = self.convert_old(
-                solc_version,
-                container_name,
-                file_contents,
-            )
-
-            # if version.parse(solc_version) >= version.parse("0.4.12"):
-            #     stdout, stderr, exit_code = self.convert_new(
-            #         solc_version, tail, container_name, file_contents
-            #     )
-            # else:
-            #     stdout, stderr, exit_code = self.convert_old(
-            #         solc_version,
-            #         container_name,
-            #         file_contents,
-            #     )
-            ast_json_file = None
-            if stdout:
-                stdout = stdout[stdout.find("{") : stdout.rfind("}") + 1]
-
-                _res = json.loads(stdout)
-
-                if "sources" in _res:
-                    if "ast" in _res["sources"][tail]:
-                        ast_json_file = _res["sources"][tail]["ast"]
-                    elif "legacyAST" in _res["sources"][tail]:
-                        ast_json_file = _res["sources"][tail]["legacyAST"]
-                else:
-                    if _res["name"] == "SourceUnit":
-                        ast_json_file = _res
-
-            elif stderr:
-                raise Exception(f"stderr Error: {stderr}")
-
-            if not ast_json_file:
-                raise Exception(f"Error no valid ast format found: {file_path}")
-
-            self.cur_contr_ast_data = ast_json_file
-
-            self.inject_bug(bug_type)
+            bug_log_list = self.inject_bug(bug_type, solc_version, output_dir)
             csv_file = os.path.join(
                 buggy_dir,
                 "BugLog_"
                 + file_name_with_ext[0 : len(file_name_with_ext) - 4]
                 + ".csv",
             )
-            csv_columns = ["loc", "length", "bug type", "approach"]
-            try:
-                with open(csv_file, "w") as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
-                    writer.writeheader()
-                    for data in self.BugLog:
-                        writer.writerow(data)
-            except IOError as io:
-                raise Exception(f"I/O error: {file_path}: {io}")
+
+            export_to_csv(bug_log_list, csv_file)
 
             os.remove(tmp_buggy_file_path)
         except Exception as e:
             self.logger.error(f"Error: {file_path}: {e}")
+
+    def get_ast(self, file_path, output_dir, solc_version, file_contents=None):
+        ast_json_files_dir = os.path.join(output_dir, "ast")
+        os.makedirs(ast_json_files_dir, exist_ok=True)
+        head, tail = os.path.split(file_path)
+
+        container_name = f"solc-select-solc-{uuid.uuid4()}"
+
+        if not file_contents:
+            file_contents = f""
+            with open(file_path, "r") as f:
+                file_contents = f.read()
+
+        stdout, stderr, exit_code = self.convert_old(
+            solc_version,
+            container_name,
+            file_contents,
+        )
+
+        ast_json_file = None
+        if stdout:
+            stdout = stdout[stdout.find("{") : stdout.rfind("}") + 1]
+
+            try:
+                _res = json.loads(stdout)
+            except Exception as json_e:
+                _split = file_contents.split("\n")
+                raise Exception(
+                    f"Error converting to json: {json_e} : {file_contents}"
+                )
+
+            if "sources" in _res:
+                if "ast" in _res["sources"][tail]:
+                    ast_json_file = _res["sources"][tail]["ast"]
+                elif "legacyAST" in _res["sources"][tail]:
+                    ast_json_file = _res["sources"][tail]["legacyAST"]
+            else:
+                if _res["name"] == "SourceUnit":
+                    ast_json_file = _res
+
+        elif stderr:
+            raise Exception(f"stderr Error: {stderr}")
+
+        if not ast_json_file:
+            raise Exception(f"Error no valid ast format found: {file_path}")
+        return ast_json_file
 
     def convert_new(self, solc_version, tail, container_name, file_contents):
         input_json_str = {
@@ -179,9 +181,9 @@ class Solidifi:
             f"{docker_run_command}",
         )
 
-    def inject_bug(self, bug_type):
-        self.used_bugs.clear()  # Reset the used bugs set
-        injected_loc_src_mapping = []
+    def inject_bug(self, bug_type, solc_version, output_dir):
+        used_bugs = set()  # Reset the used bugs set
+        bug_log_list: list[BugLog] = []
         """Append a directory separator if not already present"""
         if not (self.bugs_dir.endswith("/") or self.bugs_dir.endswith("/")):
             self.bugs_dir = self.bugs_dir + "/"
@@ -190,6 +192,9 @@ class Solidifi:
         cur_bug_dir = os.path.join(
             self.bugs_dir, cur_bug_type_details[0]["bug_type_dir"]
         )
+
+        with open(self.src_contr_file, "r") as f:
+            _file = f.read()
 
         for bug_forms in ("s", "f"):
             cur_bug_dir = os.path.join(
@@ -210,121 +215,301 @@ class Solidifi:
                     if os.path.isfile(os.path.join(cur_bug_dir, f))
                     and not f.startswith(".")
                 ]
-                bug_seq = 0
             else:
                 continue
 
             """Scan the fource code and identify the potential locations for injecting bugs"""
+            _file = self.inject_bugs_recursive(
+                _file,
+                solc_version,
+                self.src_contr_file,
+                output_dir,
+                bug_log_list,
+                bugfiles,
+                bug_forms,
+                used_bugs,
+                bug_type,
+                cur_bug_dir,
+            )
+            # region old code
+            # BIP = self.get_potential_locs(ast_json_file, bug_forms)
+            # for loc in reversed(BIP):
+            #     # Filter out used bugs
+            #     unused_bugs = [
+            #         bug for bug in bugfiles if bug not in self.used_bugs
+            #     ]
 
-            BIP = self.get_potential_locs(self.cur_contr_ast_data, bug_forms)
-            for loc in reversed(BIP):
-                # if not bug_seq < len(bugfiles):
-                # logger.error("Running out of bug snippets")
-                # break
+            #     # If all bugs have been used, you can't guarantee a unique bug anymore
+            #     if not unused_bugs:
+            #         break
 
-                # Filter out used bugs
-                unused_bugs = [
-                    bug for bug in bugfiles if bug not in self.used_bugs
-                ]
+            #     # Select a bug
+            #     selected_bug = random.choice(unused_bugs)
 
-                # If all bugs have been used, you can't guarantee a unique bug anymore
-                if not unused_bugs:
-                    break
+            #     bug_snip = ""
+            #     with open(os.path.join(cur_bug_dir, selected_bug), "r") as f:
+            #         bug_snip = f.read()
 
-                # Select a bug
-                selected_bug = random.choice(unused_bugs)
+            #     # Record that we have used this bug for this contract
+            #     self.used_bugs.add(selected_bug)
 
-                bug_f: BufferedReader = open(
-                    os.path.join(cur_bug_dir, selected_bug),
-                    "rb",
+            #     soffset = int(self.get_src(loc["src"])["soffset"])
+            #     eoffset = int(self.get_src(loc["src"])["eoffset"])
+            #     stm_size = int(self.get_src(loc["src"])["stm_size"])
+
+            #     stm = get_snippet_at_offset(
+            #         self.src_contr_file, soffset, stm_size
+            #     )
+
+            #     new_loc = get_pattern_offset(self.cur_contr_file, stm)
+
+            #     if new_loc is None:
+            #         continue
+
+            #     if loc["name"] in [
+            #         "VariableDeclaration",
+            #         "ExpressionStatement",
+            #         "Identifier",
+            #         "EmitStatement",
+            #         "PlaceholderStatement",
+            #         "Return",
+            #         "EventDefinition",
+            #     ] and (soffset not in injected_loc_src_mapping):
+            #         _file_head = _file[:eoffset]
+            #         _file_tail = _file[eoffset:]
+
+            #         _new_file_content = (
+            #             _file_head + "\n" + bug_snip + _file_tail
+            #         )
+
+            #         bug_start = eoffset + 2
+            #         bug_size = len(bug_snip)
+            #         bug_end = bug_start + bug_size
+            #         # need to find line number
+            #         _bug_snip_split = bug_snip.split("\n")
+            #         _new_file_content_split = _new_file_content.split("\n")
+            #         line_number = self.get_line_number(
+            #             _bug_snip_split, _new_file_content_split
+            #         )
+
+            #         self.BugLog.append(
+            #             {
+            #                 "loc": line_number,
+            #                 "length": bug_size,
+            #                 "bug type": bug_type,
+            #                 "approach": "code snippet injection",
+            #             }
+            #         )
+            #         injected_loc_src_mapping.append(soffset)
+            #         bug_seq += 1
+            #         _file = _new_file_content
+            #     elif loc["name"] in [
+            #         "Block",
+            #         "FunctionDefinition",
+            #         "ModifierDefinition",
+            #     ] and (eoffset not in injected_loc_src_mapping):
+            #         _file_split = _file.split("\n")
+            #         _location_snippet = _file[soffset:eoffset]
+            #         _file_head = _file[:eoffset]
+            #         _file_tail = _file[eoffset:]
+
+            #         _new_file_content = (
+            #             _file_head + "\n" + bug_snip + _file_tail
+            #         )
+
+            #         bug_start = eoffset + 2
+            #         bug_size = len(bug_snip)
+            #         bug_end = bug_start + bug_size
+            #         # need to find line number
+            #         _bug_snip_split = bug_snip.split("\n")
+            #         _new_file_content_split = _new_file_content.split("\n")
+            #         line_number = self.get_line_number(
+            #             _bug_snip_split, _new_file_content_split
+            #         )
+
+            #         self.BugLog.append(
+            #             {
+            #                 "loc": line_number,
+            #                 "length": bug_size,
+            #                 "bug type": bug_type,
+            #                 "approach": "code snippet injection",
+            #             }
+            #         )
+            #         injected_loc_src_mapping.append(eoffset)
+            #         bug_seq += 1
+            # endregion
+
+        with open(self.cur_contr_file, "w") as f:
+            f.write(_file)
+
+        # prettier_format(file_path=self.cur_contr_file)
+
+        return bug_log_list
+
+    def inject_bugs_recursive(
+        self,
+        file_contents,
+        solc_version,
+        file_path,
+        output_dir,
+        bug_log_list: list[BugLog],
+        bugfiles,
+        bug_forms,
+        used_bugs: set,
+        bug_type,
+        cur_bug_dir,
+    ):
+        # generate ast
+        ast_json_file = self.get_ast(
+            file_path, output_dir, solc_version, file_contents
+        )
+
+        # find possible location again
+        bug_potential_location = self.get_potential_locs(
+            ast_json_file, bug_forms
+        )
+
+        # choose one random site
+        # Select a bug
+        selected_bug_potential_location = self.get_potential_location(
+            bug_potential_location, file_contents
+        )
+
+        # continue with rest of the business
+        # Filter out used bugs
+        unused_bugs = [bug for bug in bugfiles if bug not in used_bugs]
+
+        if not unused_bugs:
+            return file_contents
+
+        # Select a bug
+        selected_bug = random.choice(unused_bugs)
+
+        bug_snip = ""
+        with open(os.path.join(cur_bug_dir, selected_bug), "r") as f:
+            bug_snip = f.read()
+
+        soffset = int(
+            self.get_src(selected_bug_potential_location["src"])["soffset"]
+        )
+        eoffset = int(
+            self.get_src(selected_bug_potential_location["src"])["eoffset"]
+        )
+        stm_size = int(
+            self.get_src(selected_bug_potential_location["src"])["stm_size"]
+        )
+
+        if soffset not in [bug_log.start for bug_log in bug_log_list]:
+            _new_file_content = ""
+            _cutting_queue = file_contents[soffset:eoffset]
+            if selected_bug_potential_location["name"] in [
+                "Return",
+                "PlaceholderStatement",
+                "FunctionDefinition",
+                "ModifierDefinition",
+            ]:
+                _file_head = file_contents[:soffset]
+                _file_tail = file_contents[soffset:]
+
+                _new_file_content = _file_head + "\n" + bug_snip + _file_tail
+
+                bug_start = soffset + 2
+
+            else:
+                # if expression statement is wrong
+                _file_head = file_contents[:eoffset]
+                _file_tail = file_contents[eoffset:]
+
+                _new_file_content = _file_head + "\n" + bug_snip + _file_tail
+
+                bug_start = eoffset + 2
+
+            if not _new_file_content:
+                raise Exception(
+                    f"selected_bug_potential_location GOT PROBLEM! {selected_bug_potential_location}"
                 )
 
-                # Record that we have used this bug for this contract
-                self.used_bugs.add(selected_bug)
+            bug_size = len(bug_snip)
+            bug_end = bug_start + bug_size
 
-                bug_snip = bug_f.read()
-                ##print(os.path.join(cur_bug_dir,bugfiles[bug_seq]))
-                ##print(bug_snip)
-                ##print("************")
-                bug_f.close()
-                bug_snip_len = len(bug_snip.splitlines())
-                soffset = int(self.get_src(loc["src"])["soffset"])
-                eoffset = int(self.get_src(loc["src"])["eoffset"])
-                stm_size = int(self.get_src(loc["src"])["stm_size"])
+            # need to find line number
+            _bug_snip_split = bug_snip.split("\n")
+            _new_file_content_split = _new_file_content.split("\n")
+            line_number = self.get_line_number(
+                _bug_snip_split, _new_file_content_split
+            )
 
-                stm = get_snippet_at_offset(
-                    self.src_contr_file, soffset, stm_size
+            bug_log_list.append(
+                BugLog(
+                    bug_start,
+                    line_number,
+                    bug_size,
+                    bug_type,
+                    "code snippet injection",
+                    bug_snip,
                 )
+            )
+            # Record that we have used this bug for this contract
+            used_bugs.add(selected_bug)
+            file_contents = _new_file_content
 
-                new_loc = get_pattern_offset(self.cur_contr_file, stm)
-
-                if new_loc is None:
-                    continue
-
+        # adjust the previous bugs with the new len
+        if len(bug_log_list) > 1:
+            for bug_log in bug_log_list:
                 if (
-                    loc["name"]
-                    in [
-                        "VariableDeclaration",
-                        "ExpressionStatement",
-                        "Identifier",
-                        "EmitStatement",
-                        "PlaceholderStatement",
-                        "Return",
-                        "EventDefinition",
-                    ]
-                    and (new_loc[0] not in self.BugLog)
-                    and (soffset not in injected_loc_src_mapping)
+                    bug_log.start + bug_log.size + 1
+                    > bug_log_list[-1].start + bug_log_list[-1].size + 1
                 ):
-                    update(
-                        self.cur_contr_file,
-                        new_loc[0],
-                        bug_snip.strip() + b"\n",
+                    _bug_snip_split = bug_log.bug_snip.split("\n")
+                    _file_contents_split = file_contents.split("\n")
+                    _line_number = self.get_line_number(
+                        _bug_snip_split, _file_contents_split
                     )
-                    self.BugLog = adjust_injected_loc(
-                        self.BugLog, new_loc[2], bug_snip_len
-                    )
-                    self.BugLog.append(
-                        {
-                            "loc": new_loc[2],
-                            "length": bug_snip_len,
-                            "bug type": bug_type,
-                            "approach": "code snippet injection",
-                        }
-                    )
-                    injected_loc_src_mapping.append(soffset)
-                    bug_seq += 1
-                elif (
-                    loc["name"]
-                    in ["Block", "FunctionDefinition", "ModifierDefinition"]
-                    and (new_loc[1] not in self.BugLog)
-                    and (eoffset not in injected_loc_src_mapping)
-                ):
-                    update(
-                        self.cur_contr_file,
-                        new_loc[1] + 2,
-                        b"\n" + bug_snip.strip(),
-                    )
-                    self.BugLog = adjust_injected_loc(
-                        self.BugLog, new_loc[2] + 2, bug_snip_len
-                    )
-                    self.BugLog.append(
-                        {
-                            "loc": new_loc[2] + 1,
-                            "length": bug_snip_len,
-                            "bug type": bug_type,
-                            "approach": "code snippet injection",
-                        }
-                    )
-                    injected_loc_src_mapping.append(eoffset)
-                    bug_seq += 1
+                    if _line_number:
+                        bug_log.line_number = _line_number
+                    else:
+                        raise Exception(
+                            f"old bug {bug_snip} of {cur_bug_dir} not found in new content"
+                        )
+                    bug_log.start = bug_log.start + bug_log_list[-1].size + 1
 
-        # if bug_seq ==len(BIP):
-        # print("Injection is done in all potential loctions\n")
-        # print ("**************************************************\n")
-        # print ("************* Injection Is Done *****************\n")
-        # print ("**************************************************\n")
-        # print("Following are dettails of the injected bugs:\n")
-        # print (self.BugLog)
+        return self.inject_bugs_recursive(
+            file_contents,
+            solc_version,
+            file_path,
+            output_dir,
+            bug_log_list,
+            bugfiles,
+            bug_forms,
+            used_bugs,
+            bug_type,
+            cur_bug_dir,
+        )
+
+    def get_potential_location(self, bug_potential_location, file_contents):
+        selected_bug_potential_location = random.choice(bug_potential_location)
+        _split = selected_bug_potential_location["src"].split(":")
+        start = int(_split[0])
+        size = int(_split[1])
+
+        cutting_queue = file_contents[start : start + size + 1]
+        if (
+            selected_bug_potential_location["name"] == "ExpressionStatement"
+            and "=" not in cutting_queue
+        ) or selected_bug_potential_location["name"] == "Identifier":
+            return self.get_potential_location(
+                bug_potential_location, file_contents
+            )
+
+        return selected_bug_potential_location
+
+    def get_line_number(self, _bug_snip_split, _new_file_content_split):
+        line_number = 0
+        for index, line in enumerate(_new_file_content_split):
+            if _bug_snip_split[0].strip() in line:
+                line_number = index + 1
+                break
+        return line_number
 
     def get_bug_info(self, bug_type):
         bug_types = []

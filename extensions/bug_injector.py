@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Optional
 from extensions.logger import LoggerSetup
-from .utils.helpers import get_logging_instance
+from .utils.helpers import get_logging_instance, prettier_format, run_subprocess
 
 from solidifi.solidifi import Solidifi
 
@@ -127,6 +127,9 @@ class BugInjector:
                 self.progress_updater.print_progress_bar(
                     shared_processed_files.value, total_files, is_done=True
                 )
+            # format all files inside the directory
+            prettier_format(output_path)
+
         except Exception as e:
             self.logger.exception(e)
 

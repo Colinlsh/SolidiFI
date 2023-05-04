@@ -1,3 +1,4 @@
+from dataclasses import fields
 from datetime import datetime
 from enum import Enum
 from logging import Logger
@@ -8,6 +9,7 @@ import re
 import subprocess
 from typing import Tuple
 import uuid
+import pandas as pd
 
 import requests
 
@@ -235,3 +237,32 @@ def get_log_level():
 def get_logging_instance(name: str):
     logger_setup = LoggerSetup(name, log_level=get_log_level())
     return logger_setup.get_logger()
+
+
+def prettier_format(directory: str = None, file_path: str = None):
+    command = ""
+    if directory:
+        command = f"npx prettier '{directory}/**/*.sol'"
+    elif file_path:
+        command = f"npx prettier '{file_path}'"
+
+    stdout, stderr, exit_code = run_subprocess(command)
+
+
+def export_to_csv(data_list: list[any], output_path: str):
+    current_type = type(data_list[0])
+
+    # Get field names from the current_type dataclass
+    column_names = [field.name for field in fields(current_type)]
+
+    # Create a dictionary with default values for all fields
+    default_dict = {field.name: field.default for field in fields(current_type)}
+
+    # Convert the list of current_type objects to a list of dictionaries with default values
+    dict_list = [dict(default_dict, **vars(obj)) for obj in data_list]
+
+    # Convert the list of dictionaries to a DataFrame
+    df = pd.DataFrame(dict_list, columns=column_names)
+
+    # Save the DataFrame to a CSV file
+    df.to_csv(output_path, index=False)

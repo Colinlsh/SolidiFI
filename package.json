@@ -1,0 +1,26 @@
+{
+  "name": "solidifi",
+  "version": "1.0.0",
+  "description": "SolidiFI is an automated and systematic framework for evaluating smart contracts' static analysis tools",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Colinlsh/SolidiFI.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Colinlsh/SolidiFI/issues"
+  },
+  "homepage": "https://github.com/Colinlsh/SolidiFI#readme",
+  "devDependencies": {
+    "prettier": "^2.8.8",
+    "prettier-plugin-solidity": "^1.1.3"
+  }
+}

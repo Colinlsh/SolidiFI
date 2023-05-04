@@ -7,13 +7,13 @@ from extensions.logger import LoggerSetup
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_logging():
-    LoggerSetup(file_name="test_injection", log_level=logging.DEBUG)
+    LoggerSetup(file_name="test_injection", log_level=logging.ERROR)
 
 
 @pytest.mark.parametrize(
     "file_path",
     [
-        "test/files/contracts-dataset/Clean/1654.sol",
+        "test/files/contracts-dataset/Clean/0.sol",
         "test/files/contracts-dataset/Clean/3919.sol",
         "test/files/contracts-dataset/Clean/2494.sol",
         "test/files/contracts-dataset/Clean/2121.sol",
@@ -24,7 +24,7 @@ def setup_logging():
 def test_inject(file_path):
     bug_injector = BugInjector()
 
-    bug_injector.inject(file_path, BugType.timestamp_dependency)
+    bug_injector.inject(file_path, BugType.arithmetic)
 
 
 @pytest.mark.parametrize(
